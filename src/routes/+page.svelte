@@ -1149,11 +1149,15 @@
     font-family: var(--font-body);
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
     overflow-x: hidden;
   }
  
   .app :global(*) {
     box-sizing: border-box;
+    max-width: 100%;
   }
  
   .app :global(h1),
@@ -1197,19 +1201,20 @@
   .container {
   width: 100%;
   max-width: 1180px;
-  margin: 0 auto;
+  margin-inline: auto;
   padding-inline: 32px;
 }
 
 @media (max-width: 600px) {
   .container {
-    padding-inline: 18px;
+    width: 100%;
+    padding-inline: 16px;
   }
 }
 
 @media (max-width: 380px) {
   .container {
-    padding-inline: 14px;
+    padding-inline: 12px;
   }
 }
  
@@ -1653,29 +1658,50 @@
  
   @media (max-width: 900px) {
     .hero {
-      padding: 48px 0 64px;
+      width: 100%;
+      padding: 42px 0 56px;
     }
 
     .hero-content {
+      width: 100%;
       grid-template-columns: 1fr;
+      gap: 36px;
     }
  
     .hero-text {
+      width: 100%;
       align-items: center;
       text-align: center;
     }
  
     .hero-text > p {
-      max-width: 100%;
+       width: 100%;
+       max-width: 100%;
+       font-size: 0.95rem;
     }
  
-    .hero-buttons,
-    .hero-features {
-      justify-content: center;
-    }
+     .hero-buttons {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .hero-buttons .primary-btn,
+  .hero-buttons .outline-btn {
+    width: 100%;
+  }
+
+  .hero-features {
+    width: 100%;
+    justify-content: center;
+    gap: 14px;
+  }
+
  
     .hero-card {
-      margin-top: 40px;
+       width: 100%;
+       margin-top: 20px;
+       padding: 10px 0;
     }
  
     .floating-card.top {
