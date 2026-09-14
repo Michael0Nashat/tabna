@@ -1,5 +1,5 @@
 <script>
-import { goto } from '$app/navigation';
+  import { goto } from '$app/navigation';
   import {
     Search,
     CalendarDays,
@@ -17,6 +17,7 @@ import { goto } from '$app/navigation';
     CheckCircle2,
     Lock,
     X,
+    Menu,
     Upload,
     GraduationCap,
     CreditCard,
@@ -26,6 +27,17 @@ import { goto } from '$app/navigation';
     Smartphone,
     Mail
   } from 'lucide-svelte';
+
+  // ---------------- Mobile nav ----------------
+  let mobileMenuOpen = $state(false);
+
+  function toggleMobileMenu() {
+    mobileMenuOpen = !mobileMenuOpen;
+  }
+
+  function closeMobileMenu() {
+    mobileMenuOpen = false;
+  }
 
   // ---------------- Doctor registration modal ----------------
 
@@ -132,6 +144,7 @@ import { goto } from '$app/navigation';
     showDoctorModal = true;
     step = 1;
     submitted = false;
+    closeMobileMenu();
   }
 
   function closeDoctorModal() {
@@ -197,10 +210,7 @@ import { goto } from '$app/navigation';
     name="description"
     content="منصة للاستشارات الطبية أونلاين تربط المرضى بالأطباء بطريقة سهلة وآمنة."
   />
-  <!-- FIX: the CSS referenced 'Markazi Text' and 'IBM Plex Sans Arabic' but never
-       loaded them, so every heading/body element was silently falling back to the
-       generic serif/sans-serif stack. Loading them here makes --font-head and
-       --font-body actually render as intended. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com"/>
   <link
@@ -226,13 +236,29 @@ import { goto } from '$app/navigation';
         </div>
       </div>
 
-      <nav>
-        <a href="#home">الرئيسية</a>
-        <a href="#services">الخدمات</a>
-        <a href="#how">كيف يعمل؟</a>
-        <a href="#doctors">الأطباء</a>
-        <a href="#security">الأمان</a>
+      <nav class:open={mobileMenuOpen}>
+        <a href="#home" onclick={closeMobileMenu}>الرئيسية</a>
+        <a href="#services" onclick={closeMobileMenu}>الخدمات</a>
+        <a href="#how" onclick={closeMobileMenu}>كيف يعمل؟</a>
+        <a href="#doctors" onclick={closeMobileMenu}>الأطباء</a>
+        <a href="#security" onclick={closeMobileMenu}>الأمان</a>
+        <button class="primary-btn nav-mobile-cta" onclick={openDoctorModal}>
+          أنا طبيب
+        </button>
       </nav>
+
+      <button
+        class="menu-toggle"
+        aria-label={mobileMenuOpen ? 'إغلاق القائمة' : 'فتح القائمة'}
+        aria-expanded={mobileMenuOpen}
+        onclick={toggleMobileMenu}
+      >
+        {#if mobileMenuOpen}
+          <X size={22} />
+        {:else}
+          <Menu size={22} />
+        {/if}
+      </button>
 
     </div>
   </header>
@@ -266,13 +292,11 @@ import { goto } from '$app/navigation';
           <div class="hero-buttons">
             <button class="primary-btn large">
               ابحث عن طبيب
-              <!-- FIX: was a bare ArrowLeft; flip class now scoped to this icon only -->
               <ArrowLeft size={19} class="flip-rtl" />
             </button>
 
             <button class="outline-btn large" onclick={openDoctorModal}>
               أنا طبيب
-              <!-- FIX: Stethoscope no longer gets mirrored (see .hero-buttons rule below) -->
               <Stethoscope size={19} />
             </button>
           </div>
@@ -798,8 +822,6 @@ import { goto } from '$app/navigation';
 
           التسجيل كطبيب
 
-          <!-- FIX: now shares the same .flip-rtl class as the hero CTA arrow,
-               so both "next action" arrows point the same way consistently -->
           <ArrowLeft size={18} class="flip-rtl" />
 
         </button>
@@ -1116,8 +1138,6 @@ import { goto } from '$app/navigation';
     --gold: #c9973f;
     --line: #ddd5c4;
     --white: #ffffff;
-    /* FIX: added a shared variable for the small "online"/success dot color,
-       which was previously hardcoded inline and untied to the palette */
     --success: #3f9c6f;
  
     --font-head: 'Markazi Text', 'IBM Plex Sans Arabic', serif;
@@ -1129,6 +1149,7 @@ import { goto } from '$app/navigation';
     font-family: var(--font-body);
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
   }
  
   .app :global(*) {
@@ -1183,6 +1204,12 @@ import { goto } from '$app/navigation';
 @media (max-width: 600px) {
   .container {
     padding-inline: 18px;
+  }
+}
+
+@media (max-width: 380px) {
+  .container {
+    padding-inline: 14px;
   }
 }
  
@@ -1263,6 +1290,13 @@ import { goto } from '$app/navigation';
     width: 100%;
     margin-top: 18px;
   }
+
+  @media (max-width: 480px) {
+    .hero-buttons .primary-btn.large,
+    .hero-buttons .outline-btn.large {
+      width: 100%;
+    }
+  }
  
   /* ---------------- Header ---------------- */
   .navbar {
@@ -1279,12 +1313,14 @@ import { goto } from '$app/navigation';
     align-items: center;
     justify-content: space-between;
     height: 78px;
+    position: relative;
   }
  
   .logo {
     display: flex;
     align-items: center;
     gap: 12px;
+    min-width: 0;
   }
  
   .logo-icon {
@@ -1302,11 +1338,13 @@ import { goto } from '$app/navigation';
   .logo h2 {
     font-size: 1.15rem;
     line-height: 1.1;
+    white-space: nowrap;
   }
  
   .logo span {
     font-size: 0.75rem;
     color: var(--ink-soft);
+    white-space: nowrap;
   }
  
   nav {
@@ -1325,10 +1363,59 @@ import { goto } from '$app/navigation';
   nav a:hover {
     color: var(--pine);
   }
+
+  .nav-mobile-cta {
+    display: none;
+  }
+
+  .menu-toggle {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    background: var(--pine-mist);
+    color: var(--pine);
+    flex-shrink: 0;
+  }
  
   @media (max-width: 900px) {
+    .logo span {
+      display: none;
+    }
+
     nav {
       display: none;
+      position: absolute;
+      top: 100%;
+      inset-inline: 0;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 4px;
+      background: var(--paper);
+      border-bottom: 1px solid var(--line);
+      padding: 10px 20px 20px;
+      box-shadow: 0 16px 30px -18px rgba(29, 38, 33, 0.3);
+    }
+
+    nav.open {
+      display: flex;
+    }
+
+    nav a {
+      padding: 12px 4px;
+      border-bottom: 1px solid var(--line);
+      font-size: 1rem;
+    }
+
+    .nav-mobile-cta {
+      display: inline-flex;
+      margin-top: 12px;
+    }
+
+    .menu-toggle {
+      display: flex;
     }
   }
  
@@ -1385,12 +1472,9 @@ import { goto } from '$app/navigation';
     display: flex;
     gap: 14px;
     flex-wrap: wrap;
+    width: 100%;
   }
  
-  /* FIX: previously `.hero-buttons :global(svg)` mirrored every icon in this
-     row, including the Stethoscope icon on "أنا طبيب" — flipping a stethoscope
-     icon has no meaning and looked like a rendering glitch. The mirror now
-     targets only icons explicitly marked as directional arrows. */
   .hero-buttons :global(.flip-rtl),
   .white-btn :global(.flip-rtl),
   .modal-footer :global(.flip-rtl) {
@@ -1563,13 +1647,15 @@ import { goto } from '$app/navigation';
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    /* FIX: now references the shared --success variable instead of a
-       one-off hardcoded hex value */
     background: var(--success);
     display: inline-block;
   }
  
   @media (max-width: 900px) {
+    .hero {
+      padding: 48px 0 64px;
+    }
+
     .hero-content {
       grid-template-columns: 1fr;
     }
@@ -1603,7 +1689,26 @@ import { goto } from '$app/navigation';
  
   @media (max-width: 480px) {
     .hero-text h1 {
-      font-size: 2.2rem;
+      font-size: 2rem;
+      justify-content: center;
+    }
+
+    .badge {
+      font-size: 0.78rem;
+      text-align: center;
+    }
+
+    .hero-text > p {
+      font-size: 0.95rem;
+    }
+
+    .hero-features {
+      gap: 16px 20px;
+      justify-content: center;
+    }
+
+    .hero-features > div {
+      font-size: 0.82rem;
     }
  
     .floating-card {
@@ -1611,6 +1716,10 @@ import { goto } from '$app/navigation';
       margin: 14px auto 0;
       width: 100%;
       max-width: 340px;
+    }
+
+    .medical-card {
+      padding: 28px 22px;
     }
   }
  
@@ -1641,6 +1750,30 @@ import { goto } from '$app/navigation';
  
   .section-heading p {
     font-size: 1rem;
+  }
+
+  @media (max-width: 900px) {
+    .section {
+      padding: 64px 0;
+    }
+
+    .section-heading {
+      margin-bottom: 36px;
+    }
+
+    .section-heading h2 {
+      font-size: 1.7rem;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .section-heading h2 {
+      font-size: 1.5rem;
+    }
+
+    .section-heading p {
+      font-size: 0.92rem;
+    }
   }
  
   /* ---------------- Services ---------------- */
@@ -1702,6 +1835,10 @@ import { goto } from '$app/navigation';
   @media (max-width: 520px) {
     .services-grid {
       grid-template-columns: 1fr;
+    }
+
+    .service-card {
+      padding: 24px 20px;
     }
   }
  
@@ -1784,6 +1921,7 @@ import { goto } from '$app/navigation';
   @media (max-width: 520px) {
     .steps {
       grid-template-columns: 1fr;
+      row-gap: 32px;
     }
   }
  
@@ -2015,6 +2153,10 @@ import { goto } from '$app/navigation';
   }
  
   @media (max-width: 900px) {
+    .security-section {
+      padding: 64px 0;
+    }
+
     .security-content {
       grid-template-columns: 1fr;
     }
@@ -2022,10 +2164,18 @@ import { goto } from '$app/navigation';
     .security-content > div > p {
       max-width: 100%;
     }
+
+    .security-content h2 {
+      font-size: 1.7rem;
+    }
  
     .secure-box {
       position: static;
       margin-top: 18px;
+    }
+
+    .security-visual {
+      min-height: auto;
     }
   }
  
@@ -2077,6 +2227,30 @@ import { goto } from '$app/navigation';
     font-size: 0.92rem;
     font-weight: 600;
   }
+
+  @media (max-width: 900px) {
+    .doctor-register {
+      padding: 60px 0;
+    }
+
+    .doctor-register-content h2 {
+      font-size: 1.6rem;
+    }
+
+    .registration-points {
+      gap: 16px 24px;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .registration-points > div {
+      font-size: 0.85rem;
+    }
+
+    .white-btn {
+      width: 100%;
+    }
+  }
  
   /* ---------------- Footer ---------------- */
   footer {
@@ -2099,6 +2273,7 @@ import { goto } from '$app/navigation';
  
   footer .logo span {
     color: rgba(247, 244, 238, 0.6);
+    display: inline;
   }
  
   footer .logo-icon {
@@ -2276,6 +2451,7 @@ import { goto } from '$app/navigation';
     border-radius: 12px;
     padding: 13px 16px;
     transition: border-color 0.15s ease;
+    width: 100%;
   }
 
   .field input:focus,
@@ -2348,6 +2524,7 @@ import { goto } from '$app/navigation';
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-wrap: wrap;
   }
 
   .optional-tag {
@@ -2462,5 +2639,60 @@ import { goto } from '$app/navigation';
 
   .success-state .primary-btn {
     margin-top: 10px;
+  }
+
+  /* ---------------- Modal: mobile ---------------- */
+  @media (max-width: 640px) {
+    .modal-overlay {
+      padding: 0;
+      align-items: flex-end;
+    }
+
+    .modal-box {
+      max-width: 100%;
+      max-height: 92vh;
+      border-radius: 20px 20px 0 0;
+    }
+
+    .modal-header {
+      padding: 22px 20px 0;
+    }
+
+    .modal-header h2 {
+      font-size: 1.4rem;
+    }
+
+    .modal-steps {
+      padding: 16px 20px 0;
+    }
+
+    .modal-step span:last-child {
+      display: none;
+    }
+
+    .modal-body {
+      padding: 20px 20px 4px;
+    }
+
+    .modal-footer {
+      padding: 18px 20px 24px;
+      flex-wrap: wrap;
+    }
+
+    .modal-footer .primary-btn,
+    .modal-footer .outline-btn {
+      flex: 1;
+    }
+
+    .modal-footer-hint {
+      width: 100%;
+      order: -1;
+      text-align: center;
+      margin-bottom: 4px;
+    }
+
+    .success-state {
+      padding: 16px 20px 28px;
+    }
   }
 </style>
