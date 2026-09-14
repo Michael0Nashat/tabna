@@ -1697,19 +1697,22 @@
     gap: 14px;
   }
 
- 
     .hero-card {
        width: 100%;
+       flex-direction: column;
+       align-items: center;
+       gap: 14px;
        margin-top: 20px;
        padding: 10px 0;
     }
- 
-    .floating-card.top {
-      right: 0;
-    }
- 
+
+    .floating-card.top,
     .floating-card.bottom {
-      left: 0;
+      position: static;
+      inset: auto;
+      width: 100%;
+      max-width: 340px;
+      margin: 0;
     }
   }
  
@@ -1735,13 +1738,6 @@
 
     .hero-features > div {
       font-size: 0.82rem;
-    }
- 
-    .floating-card {
-      position: static;
-      margin: 14px auto 0;
-      width: 100%;
-      max-width: 340px;
     }
 
     .medical-card {
@@ -2129,6 +2125,7 @@
   .security-visual {
     position: relative;
     display: flex;
+    flex-direction: column;
     justify-content: center;
     align-items: center;
     min-height: 300px;
@@ -2202,6 +2199,50 @@
 
     .security-visual {
       min-height: auto;
+    }
+  }
+
+  /* Mobile fine-tune for the security section (small phones) */
+  @media (max-width: 480px) {
+    .security-content h2 {
+      font-size: 1.4rem;
+    }
+
+    .security-badge {
+      font-size: 0.78rem;
+      padding: 7px 14px;
+    }
+
+    .security-content > div > p {
+      font-size: 0.92rem;
+    }
+
+    .security-list > div {
+      font-size: 0.88rem;
+    }
+
+    .security-circle {
+      width: 160px;
+      height: 160px;
+    }
+
+    .security-circle :global(svg) {
+      width: 48px;
+      height: 48px;
+    }
+
+    .secure-box {
+      max-width: 100%;
+      width: 100%;
+      padding: 12px 14px;
+    }
+
+    .secure-box strong {
+      font-size: 0.8rem;
+    }
+
+    .secure-box small {
+      font-size: 0.72rem;
     }
   }
  
