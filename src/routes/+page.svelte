@@ -58,7 +58,13 @@
     governorate: ''
   });
 
-  /** @type {{syndicateCard: File | null, idCard: File | null, specialtyCertificate: File | null, personalPhoto: File | null}} */
+  /**
+   * Keys of the files object below
+   * @typedef {'syndicateCard' | 'idCard' | 'specialtyCertificate' | 'personalPhoto'} FileKey
+   * @typedef {{ [K in FileKey]: File | null }} FilesState
+   */
+
+  /** @type {FilesState} */
   let files = $state({
     syndicateCard: null,
     idCard: null,
@@ -68,20 +74,20 @@
 
   /**
    * Safely get file by key
-   * @param {string} key
+   * @param {FileKey} key
    * @returns {File | null}
    */
   function getFile(key) {
-    return files[key];
+    return files[key] ?? null;
   }
 
   /**
    * Safely set file by key
-   * @param {string} key
+   * @param {FileKey} key
    * @param {File | null} value
    */
   function setFile(key, value) {
-    files = { ...files, [key]: value };
+    files[key] = value;
   }
 
   // ---------------- Profile photo ----------------
@@ -190,7 +196,7 @@
 
   /**
    * @param {Event} event
-   * @param {string} key
+   * @param {FileKey} key
    */
   function handleFileChange(event, key) {
     const target = /** @type {HTMLInputElement} */ (event.target);
@@ -1092,7 +1098,9 @@
               <div class="upload-grid">
 
                 {#each uploadFields as f}
-                  <div class="upload-card" class:has-file={files[f.key]}>
+                  {@const chosenFile = getFile(f.key)}
+
+                  <div class="upload-card" class:has-file={chosenFile}>
 
                     <div class="upload-icon">
                       {#if f.icon === 'GraduationCap'}
@@ -1111,17 +1119,17 @@
                       </strong>
                       <small>{f.hint}</small>
 
-                      {#if files[f.key]}
+                      {#if chosenFile}
                         <span class="file-chosen">
                           <CheckCircle2 size={14} />
-                          {files[f.key].name}
+                          {chosenFile.name}
                         </span>
                       {/if}
                     </div>
 
                     <label class="upload-btn">
                       <Upload size={16} />
-                      {files[f.key] ? 'تغيير الملف' : 'اختر ملف'}
+                      {chosenFile ? 'تغيير الملف' : 'اختر ملف'}
                       <input
                         type="file"
                         accept="image/*,application/pdf"
