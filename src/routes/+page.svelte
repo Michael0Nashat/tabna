@@ -41,10 +41,15 @@
 
   // ---------------- Doctor registration modal ----------------
 
+  // SvelteKit proxy -> Go API (the Go API has no CORS, so it can't be called
+  // straight from the browser). See src/routes/api/doctors/+server.js
+  const DOCTORS_API = '/api/doctors';
+
   let showDoctorModal = $state(false);
   let step = $state(1); // 1 = بيانات التسجيل الأولي, 2 = رفع المستندات
   let submitted = $state(false);
   let submitting = $state(false);
+  let submitError = $state('');
 
   let form = $state({
     fullName: '',
@@ -91,7 +96,12 @@
   }
 
   // ---------------- Profile photo ----------------
+  // Limits mirror server.go: MaxImageSize = 5MB, MaxFileSize = 10MB
   const MAX_PHOTO_SIZE = 5 * 1024 * 1024; // 5MB
+  const MAX_DOC_SIZE = 10 * 1024 * 1024; // 10MB
+  const PHOTO_TYPES = ['image/jpeg', 'image/png'];
+  const DOC_TYPES = ['image/jpeg', 'image/png', 'application/pdf'];
+
   let photoPreview = $state('');
   let photoError = $state('');
 
@@ -102,7 +112,7 @@
     photoError = '';
     if (!file) return;
 
-    if (!file.type.startsWith('image/')) {
+    if (!PHOTO_TYPES.includes(file.type)) {
       photoError = 'من فضلك اختر ملف صورة (JPG أو PNG)';
       input.value = '';
       return;
@@ -175,10 +185,15 @@
 
   let step2Valid = $derived(files.syndicateCard && files.idCard);
 
+  /** Per-document validation messages, keyed by FileKey. */
+  /** @type {Partial<Record<FileKey, string>>} */
+  let docErrors = $state({});
+
   function openDoctorModal() {
     showDoctorModal = true;
     step = 1;
     submitted = false;
+    submitError = '';
     closeMobileMenu();
   }
 
@@ -201,25 +216,157 @@
   function handleFileChange(event, key) {
     const target = /** @type {HTMLInputElement} */ (event.target);
     const file = target.files?.[0] ?? null;
+
+    docErrors[key] = '';
+
+    if (!file) {
+      setFile(key, null);
+      return;
+    }
+
+    // The Go API stores files as base64 and only accepts these content types.
+    if (!DOC_TYPES.includes(file.type)) {
+      docErrors[key] = 'الصيغة غير مدعومة — استخدم JPG أو PNG أو PDF';
+      target.value = '';
+      setFile(key, null);
+      return;
+    }
+
+    if (file.size > MAX_DOC_SIZE) {
+      docErrors[key] = 'حجم الملف يجب ألا يتجاوز 10MB';
+      target.value = '';
+      setFile(key, null);
+      return;
+    }
+
     setFile(key, file);
   }
 
-  function submitRegistration() {
+  /**
+   * Translates the Go API's English error strings into Arabic.
+   * @param {string} error
+   * @param {string} [details]
+   * @returns {string}
+   */
+  function translateApiError(error, details = '') {
+    const map = {
+      full_name: 'الاسم رباعي',
+      phone: 'رقم الموبايل',
+      email: 'البريد الإلكتروني',
+      national_id: 'الرقم القومي',
+      medical_syndicate_id: 'رقم قيد نقابة الأطباء',
+      birth_date: 'تاريخ الميلاد',
+      specialty: 'التخصص',
+      professional_degree: 'الدرجة المهنية',
+      governorate: 'المحافظة',
+      profile_image: 'الصورة الشخصية',
+      medical_syndicate_card: 'صورة كارنيه نقابة الأطباء',
+      national_id_card: 'صورة البطاقة الشخصية',
+      specialty_certificate: 'شهادة التخصص'
+    };
+
+    for (const [field, label] of Object.entries(map)) {
+      if (error === `${field} is required`) {
+        return `${label} مطلوب.`;
+      }
+      if (error.includes(`${field} exceeds maximum file size`)) {
+        return `حجم ${label} أكبر من الحد المسموح.`;
+      }
+      if (error.includes(`invalid file type for ${field}`)) {
+        return `صيغة ${label} غير مدعومة. استخدم JPG أو PNG أو PDF.`;
+      }
+      if (error.includes(`${field} is empty or could not be read`)) {
+        return `${label} فارغ أو تعذّرت قراءته.`;
+      }
+    }
+
+    // Unique constraints on phone / national_id / medical_syndicate_id.
+    if (details.includes('duplicate key value violates unique constraint')) {
+      if (details.includes('national_id')) {
+        return 'الرقم القومي مسجل بالفعل، برجاء التأكد من البيانات.';
+      }
+      if (details.includes('phone')) {
+        return 'رقم الموبايل مسجل بالفعل، برجاء التأكد من البيانات.';
+      }
+      if (details.includes('medical_syndicate_id')) {
+        return 'رقم قيد نقابة الأطباء مسجل بالفعل، برجاء التأكد من البيانات.';
+      }
+      return 'بعض البيانات المدخلة مسجلة بالفعل.';
+    }
+
+    if (error === 'Invalid multipart form') {
+      return 'تعذّر إرسال البيانات، حاول مرة أخرى.';
+    }
+    if (error === 'Failed to create doctor') {
+      return 'تعذّر إنشاء الحساب، حاول مرة أخرى لاحقًا.';
+    }
+    if (error === 'Cannot reach the doctors API') {
+      return 'تعذّر الاتصال بالسيرفر، تحقق من اتصالك بالإنترنت وحاول مرة أخرى.';
+    }
+
+    return error || 'حدث خطأ غير متوقع، حاول مرة أخرى.';
+  }
+
+  async function submitRegistration() {
     if (!step2Valid || submitting) return;
+
     submitting = true;
-    // NOTE: wire this up to the real registration endpoint.
-    // files.personalPhoto holds the profile photo — append it to your FormData.
-    setTimeout(() => {
-      submitting = false;
+    submitError = '';
+
+    // The Go API expects multipart/form-data with snake_case field names
+    // (see CreateDoctor in server.go).
+    const body = new FormData();
+
+    body.set('full_name', form.fullName.trim());
+    body.set('phone', form.phone.trim());
+    body.set('email', form.email.trim());
+    body.set('national_id', form.nationalId.trim());
+    body.set('medical_syndicate_id', form.syndicateNumber.trim());
+    body.set('birth_date', form.birthDate);
+    body.set('specialty', form.specialty.trim());
+    body.set('professional_degree', form.degree);
+    body.set('governorate', form.governorate);
+
+    if (files.personalPhoto) body.set('profile_image', files.personalPhoto);
+    if (files.syndicateCard) body.set('medical_syndicate_card', files.syndicateCard);
+    if (files.idCard) body.set('national_id_card', files.idCard);
+    if (files.specialtyCertificate) {
+      body.set('specialty_certificate', files.specialtyCertificate);
+    }
+
+    try {
+      const res = await fetch(DOCTORS_API, {
+        method: 'POST',
+        body
+      });
+
+      const payload = await res.json().catch(() => ({}));
+
+      if (!res.ok || payload?.error) {
+        submitError = translateApiError(
+          payload?.error ?? `فشل الاتصال بالسيرفر (${res.status})`,
+          payload?.details ?? ''
+        );
+        return;
+      }
+
       submitted = true;
       goto('/doctor-dashboard');
-    }, 700);
+    } catch (err) {
+      console.error('Doctor registration failed:', err);
+      submitError = 'تعذّر الاتصال بالسيرفر، تحقق من اتصالك بالإنترنت وحاول مرة أخرى.';
+    } finally {
+      submitting = false;
+    }
   }
 
   function resetAndClose() {
     showDoctorModal = false;
     step = 1;
     submitted = false;
+    submitting = false;
+    submitError = '';
+    docErrors = {};
     if (photoPreview) URL.revokeObjectURL(photoPreview);
     photoPreview = '';
     photoError = '';
@@ -970,7 +1117,7 @@
                   {/if}
                   <input
                     type="file"
-                    accept="image/png,image/jpeg,image/webp"
+                    accept=".jpg,.jpeg,.png,image/jpeg,image/png"
                     onchange={handlePhotoChange}
                   />
                 </label>
@@ -985,7 +1132,7 @@
                       {photoPreview ? 'تغيير الصورة' : 'اختر صورة'}
                       <input
                         type="file"
-                        accept="image/png,image/jpeg,image/webp"
+                        accept=".jpg,.jpeg,.png,image/jpeg,image/png"
                         onchange={handlePhotoChange}
                       />
                     </label>
@@ -1092,7 +1239,7 @@
 
               <p class="upload-intro">
                 ارفع المستندات التالية للتحقق من هويتك ومؤهلك المهني.
-                الصيغ المقبولة: JPG، PNG، PDF — بحد أقصى 5MB لكل ملف.
+                الصيغ المقبولة: JPG، PNG، PDF — بحد أقصى 10MB لكل ملف.
               </p>
 
               <div class="upload-grid">
@@ -1125,6 +1272,10 @@
                           {chosenFile.name}
                         </span>
                       {/if}
+
+                      {#if docErrors[f.key]}
+                        <span class="photo-error">{docErrors[f.key]}</span>
+                      {/if}
                     </div>
 
                     <label class="upload-btn">
@@ -1132,7 +1283,7 @@
                       {chosenFile ? 'تغيير الملف' : 'اختر ملف'}
                       <input
                         type="file"
-                        accept="image/*,application/pdf"
+                        accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"
                         onchange={(e) => handleFileChange(e, f.key)}
                       />
                     </label>
@@ -1146,6 +1297,13 @@
 
           </div>
 
+
+          {#if submitError}
+            <div class="submit-error" role="alert">
+              <X size={16} />
+              <span>{submitError}</span>
+            </div>
+          {/if}
 
           <div class="modal-footer">
 
@@ -2706,6 +2864,27 @@
     margin-top: 4px;
   }
 
+  /* Server-side submission error banner */
+  .submit-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin: 20px 36px 0;
+    padding: 13px 16px;
+    border-radius: 14px;
+    background: #fbeae6;
+    border: 1.5px solid #f0c9bf;
+    color: #b3402a;
+    font-size: 0.86rem;
+    font-weight: 600;
+    line-height: 1.55;
+  }
+
+  .submit-error :global(svg) {
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
   @media (max-width: 560px) {
     .photo-upload {
       flex-direction: column;
@@ -2925,6 +3104,10 @@
 
     .modal-body {
       padding: 20px 20px 4px;
+    }
+
+    .submit-error {
+      margin: 16px 20px 0;
     }
 
     .modal-footer {
