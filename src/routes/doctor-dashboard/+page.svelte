@@ -92,13 +92,10 @@ import { goto } from '$app/navigation';
   }
 
   let doctors = $state<DoctorProfile[]>([]);
-  let selectedDoctorId = $state<string>('');
   let loadingDoctors = $state(true);
   let doctorsError = $state('');
 
-  const doctor = $derived(
-    doctors.find((d) => d.id === selectedDoctorId) ?? doctors[0] ?? null
-  );
+  const doctor = $derived(doctors[0] ?? null);
 
   async function loadDoctors() {
     loadingDoctors = true;
@@ -588,21 +585,6 @@ import { goto } from '$app/navigation';
           </div>
 
         </div>
-
-        {#if doctors.length > 1}
-          <div class="doctor-switcher">
-            <label for="doctor-select">تبديل الطبيب</label>
-            <select
-              id="doctor-select"
-              value={doctor.id}
-              onchange={(e) => (selectedDoctorId = e.currentTarget.value)}
-            >
-              {#each doctors as d (d.id)}
-                <option value={d.id}>{d.name} — {d.specialty}</option>
-              {/each}
-            </select>
-          </div>
-        {/if}
       {/if}
 
 
@@ -1686,42 +1668,6 @@ import { goto } from '$app/navigation';
   .profile-retry:hover {
     transform: translateY(-2px);
     box-shadow: var(--shadow-sm);
-  }
-
-  /* ---------------- Doctor switcher ---------------- */
-  .doctor-switcher {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-    margin-top: 20px;
-    padding-top: 20px;
-    border-top: 1px solid var(--line);
-  }
-
-  .doctor-switcher label {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--ink-soft);
-  }
-
-  .doctor-switcher select {
-    flex: 1;
-    min-width: 220px;
-    font-family: inherit;
-    font-size: 0.9rem;
-    color: var(--ink);
-    background: var(--paper-deep);
-    border: 1.5px solid var(--line);
-    border-radius: 12px;
-    padding: 10px 14px;
-    cursor: pointer;
-    transition: border-color 0.15s;
-  }
-
-  .doctor-switcher select:focus {
-    outline: none;
-    border-color: var(--pine-light);
   }
 
   @media (max-width: 560px) {
