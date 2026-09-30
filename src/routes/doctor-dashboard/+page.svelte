@@ -33,18 +33,99 @@ import { goto } from '$app/navigation';
     Inbox
   } from 'lucide-svelte';
 
-  // ---------------- Doctor profile (static — wire to real account data) ----------------
+  // ---------------- Doctor profile (live from the Go API) ----------------
 
-  const doctor = {
-    name: 'د. أحمد محمد الشريف',
-    tagline: 'طبيب معتمد للطب عن بُعد',
-    degree: 'استشاري أول',
-    specialty: 'نساء وتوليد',
-    university: 'جامعة القاهرة (قصر العيني)',
-    rating: 4.9,
-    reviewsCount: 342,
-    completedConsultations: 1280
-  };
+  // Mirrors the doctor row returned by GET /doctors.
+  interface ApiDoctor {
+    id: string;
+    full_name: string;
+    phone: string;
+    email: string;
+    medical_syndicate_id: string;
+    birth_date: string;
+    specialty: string;
+    professional_degree: string;
+    governorate: string;
+    created_at: string;
+  }
+
+  interface DoctorProfile {
+    id: string;
+    name: string;
+    tagline: string;
+    degree: string;
+    specialty: string;
+    governorate: string;
+    phone: string;
+    email: string;
+    medicalSyndicateId: string;
+    joinedAt: string;
+  }
+
+  const DOCTORS_API = '/api/doctors';
+
+  function text(value: unknown, fallback: string): string {
+    return typeof value === 'string' && value.trim() !== '' ? value.trim() : fallback;
+  }
+
+  function toProfile(row: ApiDoctor): DoctorProfile {
+    const name = text(row.full_name, 'طبيب مسجَّل');
+    const degree = text(row.professional_degree, 'طبيب');
+    const specialty = text(row.specialty, 'تخصص غير محدد');
+
+    return {
+      id: row.id,
+      name,
+      // Composed from real API fields instead of a hardcoded marketing line.
+      tagline: `${degree} — ${specialty}`,
+      degree,
+      specialty,
+      governorate: text(row.governorate, '—'),
+      phone: text(row.phone, '—'),
+      email: text(row.email, '—'),
+      medicalSyndicateId: text(row.medical_syndicate_id, '—'),
+      joinedAt: text(row.created_at, '')
+    };
+  }
+
+  let doctors = $state<DoctorProfile[]>([]);
+  let selectedDoctorId = $state<string>('');
+  let loadingDoctors = $state(true);
+  let doctorsError = $state('');
+
+  const doctor = $derived(
+    doctors.find((d) => d.id === selectedDoctorId) ?? doctors[0] ?? null
+  );
+
+  async function loadDoctors() {
+    loadingDoctors = true;
+    doctorsError = '';
+
+    try {
+      const res = await fetch(DOCTORS_API);
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(text(data?.error, `فشل تحميل بيانات الأطباء (${res.status})`));
+      }
+
+      const rows: ApiDoctor[] = Array.isArray(data?.doctors) ? data.doctors : [];
+      doctors = rows.map(toProfile);
+
+      if (doctors.length === 0) {
+        doctorsError = 'لا يوجد أطباء مسجَّلون في قاعدة البيانات بعد.';
+      }
+    } catch (err) {
+      doctors = [];
+      doctorsError = err instanceof Error ? err.message : 'تعذّر الاتصال بالخادم';
+    } finally {
+      loadingDoctors = false;
+    }
+  }
+
+  $effect(() => {
+    loadDoctors();
+  });
 
   let isOnline = $state(true);
 
@@ -393,54 +474,88 @@ import { goto } from '$app/navigation';
     <!-- Profile header -->
     <section class="profile-card">
 
-      <div class="profile-main">
-
-        <div class="profile-avatar">
-          د
-          <span class="avatar-badge" class:online={isOnline}>
-            <i></i>
-          </span>
+      {#if loadingDoctors}
+        <div class="profile-state">
+          <div class="spinner" aria-hidden="true"></div>
+          <p>جارٍ تحميل بيانات الطبيب…</p>
         </div>
+      {:else if doctorsError}
+        <div class="profile-state profile-state-error">
+          <AlertCircle size={20} />
+          <p>{doctorsError}</p>
+          <button class="profile-retry" onclick={loadDoctors}>إعادة المحاولة</button>
+        </div>
+      {:else if doctor}
+        <div class="profile-main">
 
-        <div class="profile-info">
-
-          <div class="profile-name-row">
-            <h1>{doctor.name}</h1>
-            <span class="verified-pill">
-              <ShieldCheck size={14} />
-              طبيب موثق
+          <div class="profile-avatar">
+            {doctor.name.charAt(0) || 'د'}
+            <span class="avatar-badge" class:online={isOnline}>
+              <i></i>
             </span>
           </div>
 
-          <p class="profile-tagline">{doctor.tagline}</p>
+          <div class="profile-info">
 
-          <p class="profile-meta">
-            {doctor.degree}
-            <span class="dot">•</span>
-            {doctor.specialty}
-            <span class="dot">•</span>
-            {doctor.university}
-          </p>
-
-          <div class="profile-stats">
-
-            <div class="stat">
-              <Star size={16} fill="currentColor" />
-              <strong>{doctor.rating}</strong>
-              <span>({doctor.reviewsCount} تقييم)</span>
+            <div class="profile-name-row">
+              <h1>{doctor.name}</h1>
+              <span class="verified-pill">
+                <ShieldCheck size={14} />
+                طبيب موثق
+              </span>
             </div>
 
-            <div class="stat">
-              <Users size={16} />
-              <strong>{doctor.completedConsultations}</strong>
-              <span>استشارة مكتملة</span>
+            <p class="profile-tagline">{doctor.tagline}</p>
+
+            <p class="profile-meta">
+              {doctor.degree}
+              <span class="dot">•</span>
+              {doctor.specialty}
+              <span class="dot">•</span>
+              {doctor.governorate}
+            </p>
+
+            <div class="profile-stats">
+
+              <div class="stat">
+                <BadgeCheck size={16} />
+                <span>رقم النقابة:</span>
+                <strong>{doctor.medicalSyndicateId}</strong>
+              </div>
+
+              <div class="stat">
+                <Phone size={16} />
+                <span>الهاتف:</span>
+                <strong>{doctor.phone}</strong>
+              </div>
+
+              <div class="stat">
+                <Users size={16} />
+                <span>{doctors.length}</span>
+                <strong>طبيب مسجَّل</strong>
+              </div>
+
             </div>
 
           </div>
 
         </div>
 
-      </div>
+        {#if doctors.length > 1}
+          <div class="doctor-switcher">
+            <label for="doctor-select">تبديل الطبيب</label>
+            <select
+              id="doctor-select"
+              value={doctor.id}
+              onchange={(e) => (selectedDoctorId = e.currentTarget.value)}
+            >
+              {#each doctors as d (d.id)}
+                <option value={d.id}>{d.name} — {d.specialty}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
+      {/if}
 
 
       <div class="online-toggle-box">
@@ -1465,6 +1580,92 @@ import { goto } from '$app/navigation';
   .stat strong {
     color: var(--ink);
     font-weight: 700;
+  }
+
+  /* ---------------- Profile fetch states ---------------- */
+  .profile-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 36px 20px;
+    color: var(--ink-soft);
+    font-size: 0.95rem;
+    text-align: center;
+  }
+
+  .profile-state-error {
+    color: var(--danger-soft);
+  }
+
+  .spinner {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: 3px solid var(--line);
+    border-top-color: var(--pine-light);
+    animation: profile-spin 0.8s linear infinite;
+  }
+
+  @keyframes profile-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .profile-retry {
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--paper);
+    background: var(--grad-pine);
+    border: none;
+    padding: 9px 22px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+
+  .profile-retry:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-sm);
+  }
+
+  /* ---------------- Doctor switcher ---------------- */
+  .doctor-switcher {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+  }
+
+  .doctor-switcher label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--ink-soft);
+  }
+
+  .doctor-switcher select {
+    flex: 1;
+    min-width: 220px;
+    font-family: inherit;
+    font-size: 0.9rem;
+    color: var(--ink);
+    background: var(--paper-deep);
+    border: 1.5px solid var(--line);
+    border-radius: 12px;
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+
+  .doctor-switcher select:focus {
+    outline: none;
+    border-color: var(--pine-light);
   }
 
   @media (max-width: 560px) {
