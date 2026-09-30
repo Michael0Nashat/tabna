@@ -574,12 +574,6 @@ import { goto } from '$app/navigation';
                 <strong>{doctor.phone}</strong>
               </div>
 
-              <div class="stat">
-                <Users size={16} />
-                <span>{doctors.length}</span>
-                <strong>طبيب مسجَّل</strong>
-              </div>
-
             </div>
 
           </div>
