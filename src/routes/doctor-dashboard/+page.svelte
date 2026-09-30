@@ -60,6 +60,8 @@ import { goto } from '$app/navigation';
     email: string;
     medicalSyndicateId: string;
     joinedAt: string;
+    // Base64 data URL from GET /doctors/:id — empty when the doctor uploaded none.
+    profileImage: string;
   }
 
   const DOCTORS_API = '/api/doctors';
@@ -84,7 +86,8 @@ import { goto } from '$app/navigation';
       phone: text(row.phone, '—'),
       email: text(row.email, '—'),
       medicalSyndicateId: text(row.medical_syndicate_id, '—'),
-      joinedAt: text(row.created_at, '')
+      joinedAt: text(row.created_at, ''),
+      profileImage: ''
     };
   }
 
@@ -126,6 +129,47 @@ import { goto } from '$app/navigation';
   $effect(() => {
     loadDoctors();
   });
+
+  // ---------------- Profile picture ----------------
+
+  // The list endpoint omits profile_image (see GetDoctors in server.go), so the
+  // picture is fetched per doctor from GET /doctors/:id and cached per id so
+  // switching back and forth doesn't refetch the base64 payload.
+  let avatarFailed = $state(false);
+
+  const avatarSrc = $derived(doctor?.profileImage && !avatarFailed ? doctor.profileImage : '');
+
+  $effect(() => {
+    const id = doctor?.id;
+    if (!id || doctor?.profileImage) return;
+
+    avatarFailed = false;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const res = await fetch(`${DOCTORS_API}/${id}`);
+        if (!res.ok) return;
+
+        const data = await res.json();
+        const img = typeof data?.profile_image === 'string' ? data.profile_image : '';
+        if (cancelled) return;
+
+        doctors = doctors.map((d) => (d.id === id ? { ...d, profileImage: img } : d));
+      } catch {
+        // A missing picture is not a page-level failure: the avatar falls back
+        // to the doctor's initial.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  function handleAvatarError() {
+    avatarFailed = true;
+  }
 
   let isOnline = $state(true);
 
@@ -489,7 +533,11 @@ import { goto } from '$app/navigation';
         <div class="profile-main">
 
           <div class="profile-avatar">
-            {doctor.name.charAt(0) || 'د'}
+            {#if avatarSrc}
+              <img src={avatarSrc} alt={doctor.name} onerror={handleAvatarError} />
+            {:else}
+              {doctor.name.charAt(0) || 'د'}
+            {/if}
             <span class="avatar-badge" class:online={isOnline}>
               <i></i>
             </span>
@@ -1481,6 +1529,14 @@ import { goto } from '$app/navigation';
     font-weight: 700;
     flex-shrink: 0;
     box-shadow: var(--shadow-sm);
+    overflow: hidden;
+  }
+
+  .profile-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
   }
 
   .avatar-badge {
