@@ -428,9 +428,6 @@
         <a href="#how" onclick={closeMobileMenu}>كيف يعمل؟</a>
         <a href="#doctors" onclick={closeMobileMenu}>الأطباء</a>
         <a href="#security" onclick={closeMobileMenu}>الأمان</a>
-        <button class="primary-btn nav-mobile-cta" onclick={openDoctorModal}>
-          أنا طبيب
-        </button>
       </nav>
 
       <button
@@ -479,11 +476,6 @@
             <button class="primary-btn large">
               ابحث عن طبيب
               <ArrowLeft size={19} class="flip-rtl" />
-            </button>
-
-            <button class="outline-btn large" onclick={openDoctorModal}>
-              أنا طبيب
-              <Stethoscope size={19} />
             </button>
           </div>
 
