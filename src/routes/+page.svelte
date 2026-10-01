@@ -997,8 +997,7 @@
 
 
         <button class="white-btn" onclick={openDoctorModal}>
-
-          التسجيل كطبيب
+        أنشاء حساب جديد (طبيب)
 
           <ArrowLeft size={18} class="flip-rtl" />
 
