@@ -1119,7 +1119,7 @@
 
           <button class="login-btn" onclick={openLoginModal}>
             تسجيل دخول
-            <LogIn size={18} />
+            <LogIn size={18} class="flip-rtl" />
           </button>
 
         </div>
@@ -1667,7 +1667,8 @@
   /* ---------------- Buttons ---------------- */
   .primary-btn,
   .outline-btn,
-  .white-btn {
+  .white-btn,
+  .login-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
