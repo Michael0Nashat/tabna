@@ -25,7 +25,8 @@
     MapPin,
     Fingerprint,
     Smartphone,
-    Mail
+    Mail,
+    LogIn
   } from 'lucide-svelte';
 
   // ---------------- Mobile nav ----------------
@@ -387,6 +388,117 @@
       specialtyCertificate: null,
       personalPhoto: null
     };
+  }
+
+
+  // ---------------- Doctor login ----------------
+
+  // SvelteKit proxy -> Go API (POST /doctors/login). Same CORS reason as the
+  // registration call above. See src/routes/api/doctors/login/+server.js
+  const LOGIN_API = '/api/doctors/login';
+
+  let showLoginModal = $state(false);
+  let loggingIn = $state(false);
+  let loginError = $state('');
+
+  let loginForm = $state({
+    fullName: '',
+    email: ''
+  });
+
+  let loginValid = $derived(loginForm.fullName.trim() && loginForm.email.trim());
+
+  function openLoginModal() {
+    showLoginModal = true;
+    loggingIn = false;
+    loginError = '';
+    closeMobileMenu();
+  }
+
+  function closeLoginModal() {
+    // Guard against the overlay closing mid-request and orphaning the result.
+    if (loggingIn) return;
+    showLoginModal = false;
+  }
+
+  function resetAndCloseLogin() {
+    showLoginModal = false;
+    loggingIn = false;
+    loginError = '';
+    loginForm = { fullName: '', email: '' };
+  }
+
+  /**
+   * The Go API speaks English; the login form is Arabic-only.
+   * @param {string} error
+   * @returns {string}
+   */
+  function translateLoginError(error) {
+    if (error === 'full_name is required' || error === 'email is required') {
+      return 'من فضلك أدخل الاسم الرباعي والبريد الإلكتروني.';
+    }
+    if (error === 'full_name and email are required') {
+      return 'من فضلك أدخل الاسم الرباعي والبريد الإلكتروني.';
+    }
+    if (error === 'Invalid credentials') {
+      return 'لا يوجد حساب مسجّل بهذه البيانات، تأكد من الاسم والبريد الإلكتروني المسجلين.';
+    }
+    if (error === 'Failed to log in') {
+      return 'تعذّر تسجيل الدخول، حاول مرة أخرى لاحقًا.';
+    }
+    if (error === 'Cannot reach the doctors API') {
+      return 'تعذّر الاتصال بالسيرفر، تحقق من اتصالك بالإنترنت وحاول مرة أخرى.';
+    }
+
+    return error || 'حدث خطأ غير متوقع، حاول مرة أخرى.';
+  }
+
+  /**
+   * @param {SubmitEvent} event
+   */
+  function submitLogin(event) {
+    event.preventDefault();
+
+    if (!loginValid || loggingIn) return;
+
+    loggingIn = true;
+    loginError = '';
+
+    // The Go API expects a JSON body with snake_case field names
+    // (see LoginDoctor in server.go).
+    (async () => {
+      try {
+        const res = await fetch(LOGIN_API, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            full_name: loginForm.fullName.trim(),
+            email: loginForm.email.trim()
+          })
+        });
+
+        const payload = await res.json().catch(() => ({}));
+
+        if (!res.ok || payload?.error) {
+          loginError = translateLoginError(
+            payload?.error ?? `فشل الاتصال بالسيرفر (${res.status})`
+          );
+          return;
+        }
+
+        // Hand the resolved id to the dashboard so it opens the doctor that
+        // just signed in instead of whichever row happens to come first.
+        const id = typeof payload?.id === 'string' ? payload.id : '';
+
+        resetAndCloseLogin();
+        goto(id ? `/doctor-dashboard?id=${encodeURIComponent(id)}` : '/doctor-dashboard');
+      } catch (err) {
+        console.error('Doctor login failed:', err);
+        loginError = 'تعذّر الاتصال بالسيرفر، تحقق من اتصالك بالإنترنت وحاول مرة أخرى.';
+      } finally {
+        loggingIn = false;
+      }
+    })();
   }
 </script>
 
@@ -996,12 +1108,21 @@
         </div>
 
 
-        <button class="white-btn" onclick={openDoctorModal}>
-        أنشاء حساب جديد (طبيب)
+        <div class="register-actions">
 
-          <ArrowLeft size={18} class="flip-rtl" />
+          <button class="white-btn" onclick={openDoctorModal}>
+          أنشاء حساب جديد (طبيب)
 
-        </button>
+            <ArrowLeft size={18} class="flip-rtl" />
+
+          </button>
+
+          <button class="login-btn" onclick={openLoginModal}>
+            تسجيل دخول
+            <LogIn size={18} />
+          </button>
+
+        </div>
 
       </div>
 
@@ -1350,6 +1471,98 @@
           </div>
 
         {/if}
+
+      </div>
+    </div>
+  {/if}
+
+
+  <!-- Doctor Login Modal -->
+  {#if showLoginModal}
+    <div
+      class="modal-overlay"
+      role="dialog"
+      aria-label="تسجيل دخول الطبيب"
+      tabindex="0"
+      onclick={closeLoginModal}
+      onkeydown={(e) => e.key === 'Escape' && closeLoginModal()}
+    >
+      <div
+        class="modal-box"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="login-modal-title"
+        tabindex="-1"
+        onclick={(e) => e.stopPropagation()}
+        onkeydown={(e) => e.stopPropagation()}
+      >
+
+        <div class="modal-header">
+          <div>
+            <span class="modal-eyebrow">حساب الطبيب</span>
+            <h2 id="login-modal-title">تسجيل دخول</h2>
+          </div>
+
+          <button class="modal-close" aria-label="إغلاق" onclick={resetAndCloseLogin}>
+            <X size={20} />
+          </button>
+        </div>
+
+        <form onsubmit={submitLogin}>
+
+          <div class="modal-body">
+
+            <p class="login-intro">
+              أدخل الاسم الرباعي والبريد الإلكتروني المسجلين في حسابك
+              للوصول إلى لوحة تحكم الطبيب.
+            </p>
+
+            <div class="form-grid">
+
+              <label class="field field-wide">
+                <span><UserRound size={15} /> الاسم رباعي</span>
+                <input
+                  type="text"
+                  placeholder="مثال: محمد أحمد علي إبراهيم"
+                  bind:value={loginForm.fullName}
+                />
+              </label>
+
+              <label class="field field-wide">
+                <span><Mail size={15} /> البريد الإلكتروني</span>
+                <input
+                  type="email"
+                  placeholder="name@example.com"
+                  bind:value={loginForm.email}
+                />
+              </label>
+
+            </div>
+
+          </div>
+
+          {#if loginError}
+            <div class="submit-error" role="alert">
+              <X size={16} />
+              <span>{loginError}</span>
+            </div>
+          {/if}
+
+          <div class="modal-footer">
+
+            <span class="modal-footer-hint">تسجيل دخول الأطباء فقط</span>
+
+            <button
+              class="primary-btn"
+              type="submit"
+              disabled={!loginValid || loggingIn}
+            >
+              {loggingIn ? 'جاري الدخول...' : 'تسجيل الدخول'}
+            </button>
+
+          </div>
+
+        </form>
 
       </div>
     </div>
