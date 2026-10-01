@@ -14,3 +14,31 @@ https://svelte.dev/e/css_unused_selector
 https://svelte.dev/e/css_unused_selector
 2:19:23 AM [vite-plugin-svelte] src/routes/+page.svelte:2201:4 Unused CSS selector ".hero-buttons .outline-btn"
 https://svelte.dev/e/css_unused_selector
+[2m2:42:28 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2msrc/routes/+page.svelte[22m
+[2m2:43:22 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2msrc/routes/+page.svelte[22m
+[2m2:44:21 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2msrc/routes/+page.svelte[22m
+[2m2:45:22 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2msrc/routes/+page.svelte[22m
+[2m2:46:26 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2msrc/routes/+page.svelte[22m
+[2m2:47:28 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2msrc/routes/+page.svelte[22m
+[2m2:48:28 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2msrc/routes/+page.svelte[22m
+[2m2:49:29 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2msrc/routes/+page.svelte[22m
+[2m2:50:29 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2msrc/routes/+page.svelte[22m
+[2m2:51:30 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2msrc/routes/+page.svelte[22m
+[2m2:52:31 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2msrc/routes/+page.svelte[22m
+[2m2:53:32 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2msrc/routes/+page.svelte[22m
+[2m2:55:40 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2m.svelte-kit/generated/shared/error-template.js[22m
+[2m2:55:40 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2m.svelte-kit/generated/server/internal.js[22m
+[2m2:55:40 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2m.svelte-kit/generated/root.svelte[22m
+[2m2:55:40 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2m.svelte-kit/generated/root.js[22m
+[2m2:56:44 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2m.svelte-kit/generated/shared/error-template.js[22m
+[2m2:56:44 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2m.svelte-kit/generated/server/internal.js[22m
+[2m2:56:44 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2m.svelte-kit/generated/root.svelte[22m
+[2m2:56:44 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2m.svelte-kit/generated/root.js[22m
+[2m2:56:53 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2m.svelte-kit/generated/shared/error-template.js[22m
+[2m2:56:53 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2m.svelte-kit/generated/server/internal.js[22m
+[2m2:56:53 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2m.svelte-kit/generated/root.svelte[22m
+[2m2:56:53 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2m.svelte-kit/generated/root.js[22m
+[2m2:57:03 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2m.svelte-kit/generated/shared/error-template.js[22m
+[2m2:57:03 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2m.svelte-kit/generated/server/internal.js[22m
+[2m2:57:03 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2m.svelte-kit/generated/root.svelte[22m
+[2m2:57:03 AM[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2m.svelte-kit/generated/root.js[22m
