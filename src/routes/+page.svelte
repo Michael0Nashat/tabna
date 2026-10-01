@@ -449,6 +449,10 @@
     if (error === 'Cannot reach the doctors API') {
       return 'تعذّر الاتصال بالسيرفر، تحقق من اتصالك بالإنترنت وحاول مرة أخرى.';
     }
+    // Carries the upstream status in parentheses, so match on the prefix.
+    if (error.startsWith('Unexpected response from the doctors API')) {
+      return 'استجابة غير متوقعة من السيرفر، حاول مرة أخرى لاحقًا.';
+    }
 
     return error || 'حدث خطأ غير متوقع، حاول مرة أخرى.';
   }
