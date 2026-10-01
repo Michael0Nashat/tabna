@@ -2742,6 +2742,33 @@
     font-weight: 600;
   }
 
+  /* Registration CTA and the login CTA sit together as one action pair. */
+  .register-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+  }
+
+  .register-actions .white-btn {
+    margin-top: 0;
+  }
+
+  /* Outlined so the two buttons read as separate paths without competing with
+     the solid "create account" call to action. */
+  .login-btn {
+    background: transparent;
+    color: var(--white);
+    border: 1.5px solid rgba(255, 255, 255, 0.8);
+  }
+
+  .login-btn:hover {
+    background: var(--white);
+    color: var(--apricot-deep);
+    transform: translateY(-1px);
+  }
+
   @media (max-width: 900px) {
     .doctor-register {
       padding: 60px 0;
@@ -2761,7 +2788,8 @@
       font-size: 0.85rem;
     }
 
-    .white-btn {
+    .white-btn,
+    .login-btn {
       width: 100%;
     }
   }
