@@ -1,5 +1,6 @@
 <script lang="ts">
 import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import {
     Stethoscope,
     Star,
@@ -95,7 +96,17 @@ import { goto } from '$app/navigation';
   let loadingDoctors = $state(true);
   let doctorsError = $state('');
 
-  const doctor = $derived(doctors[0] ?? null);
+  // Login hands over the resolved doctor via /doctor-dashboard?id=<uuid> (see
+  // submitLogin in src/routes/+page.svelte). Without it the dashboard still
+  // opens, falling back to the first row, so the route keeps working when it is
+  // visited directly.
+  const activeDoctorId = $derived(page.url.searchParams.get('id') ?? '');
+
+  const doctor = $derived(
+    (activeDoctorId ? doctors.find((d) => d.id === activeDoctorId) : undefined) ??
+      doctors[0] ??
+      null
+  );
 
   async function loadDoctors() {
     loadingDoctors = true;

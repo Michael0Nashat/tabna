@@ -3131,6 +3131,12 @@
     }
   }
 
+  /* ---------------- Doctor login modal ---------------- */
+  .login-intro {
+    font-size: 0.9rem;
+    margin-bottom: 18px;
+  }
+
   /* ---------------- Documents upload (step 2) ---------------- */
   .upload-intro {
     font-size: 0.9rem;
