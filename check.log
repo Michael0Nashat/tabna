@@ -1,0 +1,53 @@
+﻿
+> my-first-svelte@0.0.1 check
+> svelte-kit sync && svelte-check --tsconfig ./jsconfig.json
+
+node.exe : The following Vite config options will be overridden by SvelteKit:
+At C:\Program Files\nodejs\npm.ps1:29 char:3
++   & $NODE_EXE $NPM_CLI_JS $args
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (The following V...n by SvelteKit::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  - root
+Loading svelte-check in workspace: e:\js\svelte\my-first-svelte
+Getting Svelte diagnostics...
+
+e:\js\svelte\my-first-svelte\[32msrc\routes\+page.svelte[39m:1796:3
+[33mWarn[39m: Unused CSS selector ".outline-btn.large"
+https://svelte.dev/e/css_unused_selector (svelte)
+[36m  .primary-btn.large,
+  [35m.outline-btn.large[36m {
+    padding: 14px 30px;[39m
+
+e:\js\svelte\my-first-svelte\[32msrc\routes\+page.svelte[39m:1812:5
+[33mWarn[39m: Unused CSS selector ".hero-buttons .outline-btn.large"
+https://svelte.dev/e/css_unused_selector (svelte)
+[36m    .hero-buttons .primary-btn.large,
+    [35m.hero-buttons .outline-btn.large[36m {
+      width: 100%;[39m
+
+e:\js\svelte\my-first-svelte\[32msrc\routes\+page.svelte[39m:1883:3
+[33mWarn[39m: Unused CSS selector ".nav-mobile-cta"
+https://svelte.dev/e/css_unused_selector (svelte)
+[36m
+  [35m.nav-mobile-cta[36m {
+    display: none;[39m
+
+e:\js\svelte\my-first-svelte\[32msrc\routes\+page.svelte[39m:1928:5
+[33mWarn[39m: Unused CSS selector ".nav-mobile-cta"
+https://svelte.dev/e/css_unused_selector (svelte)
+[36m
+    [35m.nav-mobile-cta[36m {
+      display: inline-flex;[39m
+
+e:\js\svelte\my-first-svelte\[32msrc\routes\+page.svelte[39m:2201:5
+[33mWarn[39m: Unused CSS selector ".hero-buttons .outline-btn"
+https://svelte.dev/e/css_unused_selector (svelte)
+[36m    .hero-buttons .primary-btn,
+    [35m.hero-buttons .outline-btn[36m {
+      width: 100%;[39m
+
+====================================
+[33msvelte-check found 0 errors and 5 warnings in 1 file
+[39m

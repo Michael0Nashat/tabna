@@ -1,6 +1,5 @@
 <script lang="ts">
 import { goto } from '$app/navigation';
-  import { page } from '$app/state';
   import {
     Stethoscope,
     Star,
@@ -31,8 +30,12 @@ import { goto } from '$app/navigation';
     VideoIcon,
     ClockIcon,
     UserRound,
-    Inbox
+    Inbox,
+    LogOut
   } from 'lucide-svelte';
+
+  /** Identity comes from the signed session cookie, never from the query string. */
+  let { data } = $props();
 
   // ---------------- Doctor profile (live from the Go API) ----------------
 
@@ -96,11 +99,10 @@ import { goto } from '$app/navigation';
   let loadingDoctors = $state(true);
   let doctorsError = $state('');
 
-  // Login hands over the resolved doctor via /doctor-dashboard?id=<uuid> (see
-  // submitLogin in src/routes/+page.svelte). Without it the dashboard still
-  // opens, falling back to the first row, so the route keeps working when it is
-  // visited directly.
-  const activeDoctorId = $derived(page.url.searchParams.get('id') ?? '');
+  // The signed-in doctor is resolved by +page.server.js from the session cookie.
+  // It used to be read from ?id=<uuid>, which let anyone open anyone else's
+  // dashboard by editing the URL.
+  const activeDoctorId = $derived(data.doctorId);
 
   const doctor = $derived(
     (activeDoctorId ? doctors.find((d) => d.id === activeDoctorId) : undefined) ??
@@ -108,19 +110,45 @@ import { goto } from '$app/navigation';
       null
   );
 
+  let signingOut = $state(false);
+
+  async function signOut() {
+    if (signingOut) return;
+    signingOut = true;
+
+    try {
+      await fetch('/api/doctors/logout', { method: 'POST' });
+    } catch {
+      // Even if the call fails, drop the cached profile so nothing signed-in is
+      // left on screen.
+    } finally {
+      doctors = [];
+      signingOut = false;
+      await goto('/');
+    }
+  }
+
   async function loadDoctors() {
     loadingDoctors = true;
     doctorsError = '';
 
     try {
       const res = await fetch(DOCTORS_API);
-      const data = await res.json();
+      const payload = await res.json();
 
       if (!res.ok) {
-        throw new Error(text(data?.error, `فشل تحميل بيانات الأطباء (${res.status})`));
+        // The session expired or was never valid: there is nothing to show, and
+        // no doctor to fall back to.
+        if (res.status === 401) {
+          doctors = [];
+          await goto('/');
+          return;
+        }
+
+        throw new Error(text(payload?.error, `فشل تحميل بيانات الأطباء (${res.status})`));
       }
 
-      const rows: ApiDoctor[] = Array.isArray(data?.doctors) ? data.doctors : [];
+      const rows: ApiDoctor[] = Array.isArray(payload?.doctors) ? payload.doctors : [];
       doctors = rows.map(toProfile);
 
       if (doctors.length === 0) {
@@ -159,8 +187,8 @@ import { goto } from '$app/navigation';
         const res = await fetch(`${DOCTORS_API}/${id}`);
         if (!res.ok) return;
 
-        const data = await res.json();
-        const img = typeof data?.profile_image === 'string' ? data.profile_image : '';
+        const payload = await res.json();
+        const img = typeof payload?.profile_image === 'string' ? payload.profile_image : '';
         if (cancelled) return;
 
         doctors = doctors.map((d) => (d.id === id ? { ...d, profileImage: img } : d));
@@ -516,6 +544,16 @@ import { goto } from '$app/navigation';
   <ArrowLeft size={16} class="flip-rtl" />
   رجوع للرئيسية
 </a>
+
+      <button
+        class="back-link logout-link"
+        type="button"
+        onclick={signOut}
+        disabled={signingOut}
+      >
+        <LogOut size={16} class="flip-rtl" />
+        {signingOut ? 'جاري تسجيل الخروج...' : 'تسجيل الخروج'}
+      </button>
 
     </div>
   </header>
@@ -1474,6 +1512,20 @@ import { goto } from '$app/navigation';
 
   .back-link :global(.flip-rtl) {
     transform: scaleX(-1);
+  }
+
+  /* Matches .back-link so the two header actions line up, but is a real
+     button so it carries disabled styling while the request is in flight. */
+  .logout-link {
+    background: none;
+    border: 0;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .logout-link:disabled {
+    opacity: 0.55;
+    cursor: progress;
   }
 
   /* ---------------- Page body ---------------- */

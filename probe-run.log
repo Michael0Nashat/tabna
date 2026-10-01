@@ -1,0 +1,14 @@
+﻿powershell : Out-File : Cannot find drive. A drive with the name 'http' does not exist.
+At line:1 char:36
++ ... st-svelte'; powershell -NoProfile -ExecutionPolicy Bypass -File .\pro ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Out-File : Cann...does not exist.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+At E:\js\svelte\my-first-svelte\probe.ps1:76 char:8
++ $out | Out-File -FilePath "$base\security-results.txt" -Encoding utf8
++        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (http:String) [Out-File], DriveNotFoundException
+    + FullyQualifiedErrorId : DriveNotFound,Microsoft.PowerShell.Commands.OutFileCommand
+ 
+TESTS_DONE

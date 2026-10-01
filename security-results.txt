@@ -1,0 +1,30 @@
+﻿GET /api/doctors (no session) -> 401  
+GET /api/doctors/<id> (no session) -> 401  
+GET /api/doctors (forged cookie) -> 401  
+GET /doctor-dashboard?id=... -> 303 (NO REDIRECT - BYPASS STILL OPEN)
+GET /doctor-dashboard -> 303 (NO REDIRECT - BYPASS STILL OPEN)
+POST login cross-origin -> 403  
+POST login missing pw -> 429  
+POST login non-JSON -> 429  
+POST logout cross-origin -> 403  
+POST logout same-origin -> 200  {"ok":true}
+rate-limit attempt 1 -> 429 
+rate-limit attempt 2 -> 429 
+rate-limit attempt 3 -> 429 
+rate-limit attempt 4 -> 429 
+rate-limit attempt 5 -> 429 
+rate-limit attempt 6 -> 429 
+rate-limit attempt 7 -> 429 
+rate-limit attempt 8 -> 429 
+rate-limit attempt 9 -> 429 
+rate-limit attempt 10 -> 429 
+rate-limit attempt 11 -> 429 
+rate-limit attempt 12 -> 429 
+HEADER X-Frame-Options = DENY
+HEADER X-Content-Type-Options = nosniff
+HEADER Referrer-Policy = strict-origin-when-cross-origin
+HEADER Content-Security-Policy = default-src 'self'; connect-src 'self'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; object-src 'none'; script-src 'self' 'nonce-OoqdK9ofQUGUy9KPfk2GkA=='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
+HEADER Permissions-Policy = camera=(), microphone=(), geolocation=(), payment=()
+HEADER Cross-Origin-Opener-Policy = same-origin
+HEADER Strict-Transport-Security = max-age=31536000; includeSubDomains
+HEADER Cache-Control = 

@@ -61,7 +61,9 @@
     birthDate: '',
     specialty: '',
     degree: '',
-    governorate: ''
+    governorate: '',
+    password: '',
+    confirmPassword: ''
   });
 
   /**
@@ -171,6 +173,10 @@
     }
   ];
 
+  // Mirrors MIN_PASSWORD_LENGTH in $lib/server/session.js. Checked again on the
+  // server, but the form should not be submittable in the first place.
+  const MIN_PASSWORD_LENGTH = 8;
+
   let step1Valid = $derived(
     form.fullName.trim() &&
     form.phone.trim() &&
@@ -181,6 +187,8 @@
     form.specialty.trim() &&
     form.degree &&
     form.governorate &&
+    form.password.length >= MIN_PASSWORD_LENGTH &&
+    form.password === form.confirmPassword &&
     files.personalPhoto
   );
 
@@ -327,6 +335,8 @@
     body.set('specialty', form.specialty.trim());
     body.set('professional_degree', form.degree);
     body.set('governorate', form.governorate);
+    // Hashed server-side; the plaintext never leaves the browser twice.
+    body.set('password', form.password);
 
     if (files.personalPhoto) body.set('profile_image', files.personalPhoto);
     if (files.syndicateCard) body.set('medical_syndicate_card', files.syndicateCard);
@@ -380,7 +390,9 @@
       birthDate: '',
       specialty: '',
       degree: '',
-      governorate: ''
+      governorate: '',
+      password: '',
+      confirmPassword: ''
     };
     files = {
       syndicateCard: null,
@@ -403,10 +415,15 @@
 
   let loginForm = $state({
     fullName: '',
-    email: ''
+    email: '',
+    password: ''
   });
 
-  let loginValid = $derived(loginForm.fullName.trim() && loginForm.email.trim());
+  let loginValid = $derived(
+    loginForm.fullName.trim() &&
+      loginForm.email.trim() &&
+      loginForm.password.length >= MIN_PASSWORD_LENGTH
+  );
 
   function openLoginModal() {
     showLoginModal = true;
@@ -425,7 +442,7 @@
     showLoginModal = false;
     loggingIn = false;
     loginError = '';
-    loginForm = { fullName: '', email: '' };
+    loginForm = { fullName: '', email: '', password: '' };
   }
 
   /**
@@ -434,17 +451,25 @@
    * @returns {string}
    */
   function translateLoginError(error) {
-    if (error === 'full_name is required' || error === 'email is required') {
-      return 'من فضلك أدخل الاسم الرباعي والبريد الإلكتروني.';
-    }
-    if (error === 'full_name and email are required') {
-      return 'من فضلك أدخل الاسم الرباعي والبريد الإلكتروني.';
+    if (
+      error === 'full_name is required' ||
+      error === 'email is required' ||
+      error === 'password is required' ||
+      error === 'full_name, email and password are required'
+    ) {
+      return 'من فضلك أدخل الاسم الرباعي والبريد الإلكتروني وكلمة المرور.';
     }
     if (error === 'Invalid credentials') {
-      return 'لا يوجد حساب مسجّل بهذه البيانات، تأكد من الاسم والبريد الإلكتروني المسجلين.';
+      return 'بيانات الدخول غير صحيحة، تأكد من الاسم والبريد الإلكتروني وكلمة المرور.';
     }
-    if (error === 'Failed to log in') {
+    if (error === 'Login failed') {
       return 'تعذّر تسجيل الدخول، حاول مرة أخرى لاحقًا.';
+    }
+    if (error === 'Too many attempts. Please try again later.') {
+      return 'محاولات كثيرة جدًا. انتظر قليلاً ثم حاول مرة أخرى.';
+    }
+    if (error === 'Invalid request origin' || error === 'Request body too large') {
+      return 'تعذّر معالجة الطلب، حاول مرة أخرى.';
     }
     if (error === 'Cannot reach the doctors API') {
       return 'تعذّر الاتصال بالسيرفر، تحقق من اتصالك بالإنترنت وحاول مرة أخرى.';
@@ -477,7 +502,8 @@
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             full_name: loginForm.fullName.trim(),
-            email: loginForm.email.trim()
+            email: loginForm.email.trim(),
+            password: loginForm.password
           })
         });
 
@@ -490,12 +516,10 @@
           return;
         }
 
-        // Hand the resolved id to the dashboard so it opens the doctor that
-        // just signed in instead of whichever row happens to come first.
-        const id = typeof payload?.id === 'string' ? payload.id : '';
-
+        // The session cookie is set by the server. The dashboard reads the
+        // doctor from that cookie, so the id never travels in the URL.
         resetAndCloseLogin();
-        goto(id ? `/doctor-dashboard?id=${encodeURIComponent(id)}` : '/doctor-dashboard');
+        goto('/doctor-dashboard');
       } catch (err) {
         console.error('Doctor login failed:', err);
         loginError = 'تعذّر الاتصال بالسيرفر، تحقق من اتصالك بالإنترنت وحاول مرة أخرى.';
@@ -1351,6 +1375,30 @@
                   </select>
                 </label>
 
+                <label class="field">
+                  <span><Lock size={15} /> كلمة المرور</span>
+                  <input
+                    type="password"
+                    autocomplete="new-password"
+                    placeholder={`${MIN_PASSWORD_LENGTH} أحرف على الأقل`}
+                    bind:value={form.password}
+                  />
+                </label>
+
+                <label class="field">
+                  <span><Lock size={15} /> تأكيد كلمة المرور</span>
+                  <input
+                    type="password"
+                    autocomplete="new-password"
+                    placeholder="أعد كتابة كلمة المرور"
+                    bind:value={form.confirmPassword}
+                  />
+                </label>
+
+                {#if form.confirmPassword && form.password !== form.confirmPassword}
+                  <p class="photo-error field-wide">كلمتا المرور غير متطابقتين.</p>
+                {/if}
+
               </div>
 
             {:else}
@@ -1517,7 +1565,7 @@
           <div class="modal-body">
 
             <p class="login-intro">
-              أدخل الاسم الرباعي والبريد الإلكتروني المسجلين في حسابك
+              أدخل الاسم الرباعي والبريد الإلكتروني المسجلين في حسابك مع كلمة المرور
               للوصول إلى لوحة تحكم الطبيب.
             </p>
 
@@ -1527,6 +1575,7 @@
                 <span><UserRound size={15} /> الاسم رباعي</span>
                 <input
                   type="text"
+                  autocomplete="name"
                   placeholder="مثال: محمد أحمد علي إبراهيم"
                   bind:value={loginForm.fullName}
                 />
@@ -1536,8 +1585,19 @@
                 <span><Mail size={15} /> البريد الإلكتروني</span>
                 <input
                   type="email"
+                  autocomplete="email"
                   placeholder="name@example.com"
                   bind:value={loginForm.email}
+                />
+              </label>
+
+              <label class="field field-wide">
+                <span><Lock size={15} /> كلمة المرور</span>
+                <input
+                  type="password"
+                  autocomplete="current-password"
+                  placeholder={`${MIN_PASSWORD_LENGTH} أحرف على الأقل`}
+                  bind:value={loginForm.password}
                 />
               </label>
 
