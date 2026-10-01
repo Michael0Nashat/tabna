@@ -1067,7 +1067,9 @@
         <div class="modal-header">
           <div>
             <span class="modal-eyebrow">انضمام الأطباء</span>
-            <h2 id="doctor-modal-title">التسجيل كطبيب</h2>
+            <h2 id="doctor-modal-title">
+              أنشاء حساب جديد
+            </h2>
           </div>
 
           <button class="modal-close" aria-label="إغلاق" onclick={resetAndClose}>
