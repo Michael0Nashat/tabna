@@ -440,7 +440,7 @@
       error === 'password is required' ||
       error === 'full_name, email and password are required'
     ) {
-      return 'من فضلك أدخل الاسم الرباعي والبريد الإلكتروني.';
+      return 'من فضلك أدخل جميع البيانات المطلوبة.';
     }
     if (error === 'Invalid credentials') {
       return 'بيانات الدخول غير صحيحة، تأكد من الاسم والبريد الإلكتروني.';
@@ -1521,11 +1521,6 @@
         <form onsubmit={submitLogin}>
 
           <div class="modal-body">
-
-            <p class="login-intro">
-              أدخل الاسم الرباعي والبريد الإلكتروني المسجلين في حسابك
-              للوصول إلى لوحة تحكم الطبيب.
-            </p>
 
             <div class="form-grid">
 
@@ -3141,12 +3136,6 @@
     .photo-actions {
       justify-content: center;
     }
-  }
-
-  /* ---------------- Doctor login modal ---------------- */
-  .login-intro {
-    font-size: 0.9rem;
-    margin-bottom: 18px;
   }
 
   /* ---------------- Documents upload (step 2) ---------------- */
