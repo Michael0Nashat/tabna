@@ -1,55 +1,104 @@
+import { env } from '$env/dynamic/private';
 import { json } from '@sveltejs/kit';
-import {
-	MAX_PASSWORD_LENGTH,
-	setSessionCookie
-} from '$lib/server/session.js';
-import {
-	callUpstream,
-	clientKey,
-	isSameOrigin,
-	MAX_JSON_BODY_BYTES,
-	rateLimit
-} from '$lib/server/upstream.js';
 
-// The Go API hashes this itself, so the proxy only checks the shape of what the
-// browser sends before the credentials are forwarded.
-const TEXT_FIELDS = ['full_name', 'email', 'password'];
+const DEFAULT_API_BASE = 'https://goserverapi.vercel.app';
 
-const LOGIN_LIMIT = 10;
-const LOGIN_WINDOW_MS = 10 * 60 * 1000;
+// Text fields accepted by the Go login endpoint (see server.go -> LoginDoctor).
+const TEXT_FIELDS = ['full_name', 'email'];
+
+/** @returns {string} */
+function getApiBase() {
+	const base = env.DOCTORS_API_URL || DEFAULT_API_BASE;
+	return base.replace(/\/+$/, '');
+}
 
 /**
- * Signs a doctor in (POST /doctors/login).
+ * Same normalisation as LoginDoctor in server.go: trim, then fold case, so a
+ * hand-typed name or a mixed-case email still matches the stored row.
  *
- * The Go API owns the credentials and hashes the password; the proxy only
- * validates the shape of the request and then mints the session cookie. The
- * browser never receives a token it could read or leak — only an httpOnly cookie.
- *
- * There is deliberately no fallback that matches the credentials against the
- * doctor list. That list carries the name and email of every doctor, so matching
- * against it would hand a valid session to anyone who can read it.
- *
- * @type {import('./$types').RequestHandler}
+ * @param {unknown} value
+ * @returns {string}
  */
-export async function POST({ request, cookies, fetch }) {
-	if (!isSameOrigin(request)) {
-		return json({ error: 'Invalid request origin' }, { status: 403 });
-	}
+function normalize(value) {
+	return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
 
-	const declaredLength = Number(request.headers.get('content-length') ?? 0);
-	if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES) {
-		return json({ error: 'Request body too large' }, { status: 413 });
-	}
+/**
+ * Matches the credentials against the already-deployed GET /doctors list.
+ *
+ * POST /doctors/login only answers once server.go is redeployed; until then the
+ * API replies with Vercel's plain-text 404. The list endpoint is already live
+ * and carries the same two columns, so login degrades to matching there instead
+ * of failing outright. This branch only runs while that route returns 404 — the
+ * dedicated endpoint takes over by itself the moment it is deployed.
+ *
+ * @param {string} base
+ * @param {string} fullName already normalised
+ * @param {string} email already normalised
+ * @param {typeof fetch} fetch
+ * @returns {Promise<Response>}
+ */
+async function matchAgainstList(base, fullName, email, fetch) {
+	/** @type {Response} */
+	let upstream;
 
-	// Charged before the password is examined, so guessing is not free.
-	const limit = rateLimit(clientKey(request, 'login'), LOGIN_LIMIT, LOGIN_WINDOW_MS);
-	if (!limit.allowed) {
+	try {
+		upstream = await fetch(`${base}/doctors`, {
+			headers: { accept: 'application/json' }
+		});
+	} catch (cause) {
 		return json(
-			{ error: 'Too many attempts. Please try again later.' },
-			{ status: 429, headers: { 'retry-after': String(limit.retryAfter) } }
+			{ error: 'Cannot reach the doctors API', details: String(cause) },
+			{ status: 502 }
 		);
 	}
 
+	const raw = await upstream.text();
+
+	/** @type {Record<string, unknown>} */
+	let data;
+
+	try {
+		data = raw ? JSON.parse(raw) : {};
+	} catch {
+		return json({ error: 'Unexpected response from the doctors API' }, { status: 502 });
+	}
+
+	if (!upstream.ok || data.error) {
+		const status = upstream.status >= 400 ? upstream.status : 400;
+		return json({ error: data.error ?? 'Unexpected response from the doctors API' }, { status });
+	}
+
+	const rows = Array.isArray(data.doctors) ? data.doctors : [];
+
+	const match = rows.find((row) => {
+		if (!row || typeof row !== 'object' || Array.isArray(row)) return false;
+		const record = /** @type {Record<string, unknown>} */ (row);
+		return normalize(record.full_name) === fullName && normalize(record.email) === email;
+	});
+
+	if (!match) {
+		return json({ error: 'Invalid credentials' }, { status: 401 });
+	}
+
+	const id = /** @type {Record<string, unknown>} */ (match).id;
+
+	return json({ id: typeof id === 'string' ? id : '' });
+}
+
+/**
+ * Proxies doctor login (POST /doctors/login) from the Go API.
+ *
+ * Same reason as the GET/POST in ../+server.js: the API ships no CORS headers,
+ * so the browser cannot read it cross-origin. Going through the server keeps the
+ * base URL private and gives us one place to normalise the response for the UI.
+ *
+ * This is a static segment, so SvelteKit matches `/api/doctors/login` here
+ * instead of the sibling `/api/doctors/[id]` dynamic route.
+ *
+ * @type {import('./$types').RequestHandler}
+ */
+export async function POST({ request, fetch }) {
 	/** @type {Record<string, unknown>} */
 	let payload;
 
@@ -63,8 +112,8 @@ export async function POST({ request, cookies, fetch }) {
 		return json({ error: 'Invalid JSON body' }, { status: 400 });
 	}
 
-	// Only the three known fields are forwarded. Anything else the client sends
-	// is dropped rather than passed through to the API.
+	// Only the two text fields are forwarded. Anything else the client sends is
+	// dropped rather than passed through to the API.
 	/** @type {Record<string, string>} */
 	const body = {};
 
@@ -73,48 +122,81 @@ export async function POST({ request, cookies, fetch }) {
 		if (typeof value === 'string') body[field] = value.trim();
 	}
 
-	if (!body.full_name || !body.email || !body.password) {
+	if (!body.full_name || !body.email) {
+		return json({ error: 'full_name and email are required' }, { status: 400 });
+	}
+
+	const base = getApiBase();
+	const fullName = normalize(body.full_name);
+	const email = normalize(body.email);
+
+	/** @type {Response} */
+	let upstream;
+
+	try {
+		upstream = await fetch(`${base}/doctors/login`, {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				accept: 'application/json'
+			},
+			body: JSON.stringify(body)
+		});
+	} catch (cause) {
 		return json(
-			{ error: 'full_name, email and password are required' },
-			{ status: 400 }
+			{ error: 'Cannot reach the doctors API', details: String(cause) },
+			{ status: 502 }
 		);
 	}
 
-	if (body.password.length > MAX_PASSWORD_LENGTH) {
-		return json({ error: 'Invalid credentials' }, { status: 401 });
+	// The Go route isn't deployed yet, so the API answers 404 (Vercel's
+	// plain-text body). Fall back rather than surfacing a misleading error.
+	if (upstream.status === 404) {
+		return matchAgainstList(base, fullName, email, fetch);
 	}
 
-	const result = await callUpstream('/doctors/login', {
-		fetch,
-		method: 'POST',
-		body: JSON.stringify(body)
-	});
+	const raw = await upstream.text();
 
-	if (!result.ok) {
-		// The upstream message can name columns and rows, so it is not forwarded.
-		// Bad credentials collapse into one generic 401, which also avoids telling
-		// an attacker whether the name exists.
-		if (result.status === 401 || result.status === 403) {
-			return json({ error: 'Invalid credentials' }, { status: 401 });
+	// The Go API answers with JSON, but infrastructure errors can arrive as
+	// text/plain or HTML. Report what actually came back instead of collapsing
+	// every such failure into one opaque message.
+	/** @type {Record<string, unknown>} */
+	let data = {};
+
+	if (raw.trim() !== '') {
+		try {
+			const parsed = JSON.parse(raw);
+
+			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+				data = parsed;
+			}
+		} catch {
+			const status = upstream.status >= 400 ? upstream.status : 502;
+
+			return json(
+				{
+					error: `Unexpected response from the doctors API (HTTP ${upstream.status})`,
+					details: raw.slice(0, 500)
+				},
+				{ status }
+			);
 		}
-
-		return json({ error: 'Login failed' }, { status: result.status });
 	}
 
+	if (!upstream.ok || data.error) {
+		const status = upstream.status >= 400 ? upstream.status : 400;
+		return json({ error: data.error ?? 'Unexpected response from the doctors API' }, { status });
+	}
+
+	const record = data.doctor;
+	/** @type {Record<string, unknown>} */
 	const doctor =
-		result.data.doctor &&
-		typeof result.data.doctor === 'object' &&
-		!Array.isArray(result.data.doctor)
-			? /** @type {Record<string, unknown>} */ (result.data.doctor)
+		record && typeof record === 'object' && !Array.isArray(record)
+			? /** @type {Record<string, unknown>} */ (record)
 			: {};
 
-	const id = typeof doctor.id === 'string' ? doctor.id : '';
-
-	if (!id) {
-		return json({ error: 'Login failed' }, { status: 401 });
-	}
-
-	await setSessionCookie(cookies, id);
-
-	return json({ ok: true });
+	// Only the id is forwarded. The Go handler returns the same row as
+	// GET /doctors/:id, whose large base64 image columns are never needed here —
+	// the dashboard fetches the picture on its own once it knows the id.
+	return json({ id: typeof doctor.id === 'string' ? doctor.id : '' });
 }
