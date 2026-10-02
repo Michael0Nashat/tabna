@@ -56,6 +56,7 @@
     fullName: '',
     phone: '',
     email: '',
+    password: '',
     nationalId: '',
     syndicateNumber: '',
     birthDate: '',
@@ -102,6 +103,12 @@
   const MAX_DOC_SIZE = 10 * 1024 * 1024; // 10MB
   const PHOTO_TYPES = ['image/jpeg', 'image/png'];
   const DOC_TYPES = ['image/jpeg', 'image/png', 'application/pdf'];
+
+  // Mirrors MIN_PASSWORD_LENGTH in src/lib/server/session.js. That module is
+  // server-only, so the browser cannot import it — the value is repeated here
+  // to keep the submit button honest instead of letting the server reject a
+  // short password after the round trip.
+  const MIN_PASSWORD_LENGTH = 8;
 
   let photoPreview = $state('');
   let photoError = $state('');
@@ -175,6 +182,7 @@
     form.fullName.trim() &&
     form.phone.trim() &&
     form.email.trim() &&
+    form.password.length >= MIN_PASSWORD_LENGTH &&
     form.nationalId.trim() &&
     form.syndicateNumber.trim() &&
     form.birthDate &&
@@ -321,6 +329,9 @@
     body.set('full_name', form.fullName.trim());
     body.set('phone', form.phone.trim());
     body.set('email', form.email.trim());
+    // Sent in plain text to our own proxy, which hashes it with PBKDF2 before
+    // it ever reaches the Go API (see src/routes/api/doctors/+server.js).
+    body.set('password', form.password);
     body.set('national_id', form.nationalId.trim());
     body.set('medical_syndicate_id', form.syndicateNumber.trim());
     body.set('birth_date', form.birthDate);
@@ -375,6 +386,7 @@
       fullName: '',
       phone: '',
       email: '',
+      password: '',
       nationalId: '',
       syndicateNumber: '',
       birthDate: '',
@@ -403,10 +415,15 @@
 
   let loginForm = $state({
     fullName: '',
-    email: ''
+    email: '',
+    password: ''
   });
 
-  let loginValid = $derived(loginForm.fullName.trim() && loginForm.email.trim());
+  let loginValid = $derived(
+    loginForm.fullName.trim() &&
+    loginForm.email.trim() &&
+    loginForm.password.length > 0
+  );
 
   function openLoginModal() {
     showLoginModal = true;
@@ -425,7 +442,7 @@
     showLoginModal = false;
     loggingIn = false;
     loginError = '';
-    loginForm = { fullName: '', email: '' };
+    loginForm = { fullName: '', email: '', password: '' };
   }
 
   /**
@@ -485,7 +502,8 @@
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             full_name: loginForm.fullName.trim(),
-            email: loginForm.email.trim()
+            email: loginForm.email.trim(),
+            password: loginForm.password
           })
         });
 
