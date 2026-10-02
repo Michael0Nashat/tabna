@@ -306,6 +306,14 @@
     if (error === 'Invalid multipart form') {
       return 'تعذّر إرسال البيانات، حاول مرة أخرى.';
     }
+    // Surfaced raw in English before: the form had no password field, so the
+    // message could never be acted on. See MIN_PASSWORD_LENGTH above.
+    if (error.startsWith('password must be at least')) {
+      return `كلمة المرور يجب ألا تقل عن ${MIN_PASSWORD_LENGTH} أحرف.`;
+    }
+    if (error === 'password is too long') {
+      return 'كلمة المرور طويلة جدًا.';
+    }
     if (error === 'Failed to create doctor') {
       return 'تعذّر إنشاء الحساب، حاول مرة أخرى لاحقًا.';
     }
@@ -458,6 +466,9 @@
       error === 'full_name, email and password are required'
     ) {
       return 'من فضلك أدخل جميع البيانات المطلوبة.';
+    }
+    if (error === 'Invalid JSON body') {
+      return 'تعذّر قراءة البيانات المرسلة، حاول مرة أخرى.';
     }
     if (error === 'Invalid credentials') {
       return 'بيانات الدخول غير صحيحة، تأكد من الاسم والبريد الإلكتروني.';
@@ -1322,6 +1333,17 @@
                 </label>
 
                 <label class="field">
+                  <span><Lock size={15} /> كلمة المرور</span>
+                  <input
+                    type="password"
+                    autocomplete="new-password"
+                    minlength={MIN_PASSWORD_LENGTH}
+                    placeholder={`8 أحرف على الأقل`}
+                    bind:value={form.password}
+                  />
+                </label>
+
+                <label class="field">
                   <span><Fingerprint size={15} /> الرقم القومي</span>
                   <input
                     type="text"
@@ -1559,6 +1581,16 @@
                   autocomplete="email"
                   placeholder="name@example.com"
                   bind:value={loginForm.email}
+                />
+              </label>
+
+              <label class="field field-wide">
+                <span><Lock size={15} /> كلمة المرور</span>
+                <input
+                  type="password"
+                  autocomplete="current-password"
+                  placeholder="••••••••"
+                  bind:value={loginForm.password}
                 />
               </label>
 
