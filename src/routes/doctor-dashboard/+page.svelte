@@ -52,6 +52,7 @@ import { goto } from '$app/navigation';
     specialty: string;
     professional_degree: string;
     governorate: string;
+    is_online: boolean;
     created_at: string;
   }
 
@@ -66,6 +67,7 @@ import { goto } from '$app/navigation';
     email: string;
     medicalSyndicateId: string;
     joinedAt: string;
+    isOnline: boolean;
     // Base64 data URL from GET /doctors/:id — empty when the doctor uploaded none.
     profileImage: string;
   }
@@ -93,6 +95,7 @@ import { goto } from '$app/navigation';
       email: text(row.email, '—'),
       medicalSyndicateId: text(row.medical_syndicate_id, '—'),
       joinedAt: text(row.created_at, ''),
+      isOnline: Boolean(row.is_online),
       profileImage: ''
     };
   }
@@ -184,7 +187,53 @@ import { goto } from '$app/navigation';
     avatarFailed = true;
   }
 
-  let isOnline = $state(true);
+  // ---------------- Online status ----------------
+
+  // Seeded from the real API value once the doctor row loads; kept in local
+  // state so the toggle is instant (optimistic). The PATCH call syncs the
+  // change to the backend and rolls back on failure.
+  let isOnline = $state(false);
+  let togglingOnline = $state(false);
+
+  // Sync isOnline whenever the resolved doctor changes (e.g. after loadDoctors).
+  $effect(() => {
+    if (doctor) isOnline = doctor.isOnline;
+  });
+
+  async function toggleOnlineStatus() {
+    if (!doctor || togglingOnline) return;
+
+    const next = !isOnline;
+
+    // Optimistic update — feels instant to the user.
+    isOnline = next;
+    togglingOnline = true;
+
+    try {
+      const res = await fetch(`${DOCTORS_API}/${doctor.id}/status`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ is_online: next })
+      });
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const data = await res.json();
+
+      // Keep local state in sync with what the server confirmed.
+      isOnline = typeof data.is_online === 'boolean' ? data.is_online : next;
+
+      // Also update the cached doctor list so switching doctors stays correct.
+      doctors = doctors.map((d) =>
+        d.id === doctor!.id ? { ...d, isOnline } : d
+      );
+    } catch {
+      // Roll back the optimistic update on any failure.
+      isOnline = !next;
+    } finally {
+      togglingOnline = false;
+    }
+  }
 
   // ---------------- Pricing ----------------
 
@@ -730,7 +779,8 @@ import { goto } from '$app/navigation';
           role="switch"
           aria-checked={isOnline}
           aria-label="تفعيل حالة الاتصال"
-          onclick={() => (isOnline = !isOnline)}
+          disabled={togglingOnline || !doctor}
+          onclick={toggleOnlineStatus}
         >
           <span class="switch-thumb"></span>
         </button>
