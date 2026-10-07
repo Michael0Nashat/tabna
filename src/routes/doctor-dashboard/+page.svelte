@@ -31,7 +31,12 @@ import { goto } from '$app/navigation';
     VideoIcon,
     ClockIcon,
     UserRound,
-    Inbox
+    Inbox,
+    MapPin,
+    Building2,
+    Plus,
+    Trash2,
+    Clock
   } from 'lucide-svelte';
 
   // ---------------- Doctor profile (live from the Go API) ----------------
@@ -196,6 +201,169 @@ import { goto } from '$app/navigation';
     { key: 'audio', label: 'Audio Call', icon: 'Phone' },
     { key: 'video', label: 'Video Call', icon: 'Video' }
   ];
+
+  // ---------------- Clinics / Hospitals ----------------
+
+  type PlaceType = 'clinic' | 'hospital';
+
+  interface ClinicSlot {
+    id: number;
+    from: string;
+    to: string;
+  }
+
+  interface ClinicDay {
+    key: string;
+    label: string;
+    isOff: boolean;
+    slots: ClinicSlot[];
+  }
+
+  interface Clinic {
+    id: number;
+    type: PlaceType;
+    name: string;
+    address: string;
+    phone: string;
+    consultFee: number;
+    days: ClinicDay[];
+  }
+
+  const DAY_TEMPLATES: Omit<ClinicDay, 'slots'>[] = [
+    { key: 'sat', label: 'السبت',    isOff: false },
+    { key: 'sun', label: 'الأحد',    isOff: true  },
+    { key: 'mon', label: 'الاثنين',  isOff: true  },
+    { key: 'tue', label: 'الثلاثاء', isOff: true  },
+    { key: 'wed', label: 'الأربعاء', isOff: false },
+    { key: 'thu', label: 'الخميس',  isOff: false },
+    { key: 'fri', label: 'الجمعة',  isOff: false },
+  ];
+
+  function makeDays(activeDays: string[], defaultFrom = '09:00', defaultTo = '17:00'): ClinicDay[] {
+    return DAY_TEMPLATES.map((d) => ({
+      ...d,
+      isOff: !activeDays.includes(d.key),
+      slots: activeDays.includes(d.key)
+        ? [{ id: Date.now() + Math.random(), from: defaultFrom, to: defaultTo }]
+        : []
+    }));
+  }
+
+  let clinics = $state<Clinic[]>([
+    {
+      id: 1,
+      type: 'clinic',
+      name: 'عيادة الدكتور الخاصة',
+      address: 'القاهرة — مدينة نصر، شارع عباس العقاد',
+      phone: '0100 000 0001',
+      consultFee: 300,
+      days: makeDays(['sat', 'wed', 'thu'], '16:00', '22:00')
+    },
+    {
+      id: 2,
+      type: 'hospital',
+      name: 'مستشفى المعادي التخصصي',
+      address: 'القاهرة — المعادي، شارع النصر',
+      phone: '0100 000 0002',
+      consultFee: 500,
+      days: makeDays(['fri'], '14:00', '20:00')
+    }
+  ]);
+
+  let slotIdCounter = $state(1000);
+
+  // expanded / collapsed per clinic
+  let expandedClinicIds = $state<number[]>([1]);
+
+  function toggleClinicExpand(id: number) {
+    expandedClinicIds = expandedClinicIds.includes(id)
+      ? expandedClinicIds.filter((x) => x !== id)
+      : [...expandedClinicIds, id];
+  }
+
+  function addClinic() {
+    const newId = Date.now();
+    clinics = [
+      ...clinics,
+      {
+        id: newId,
+        type: 'clinic',
+        name: 'عيادة جديدة',
+        address: '',
+        phone: '',
+        consultFee: 200,
+        days: makeDays(['sat', 'wed'])
+      }
+    ];
+    expandedClinicIds = [...expandedClinicIds, newId];
+  }
+
+  function removeClinic(id: number) {
+    clinics = clinics.filter((c) => c.id !== id);
+    expandedClinicIds = expandedClinicIds.filter((x) => x !== id);
+  }
+
+  function updateClinicField<K extends keyof Clinic>(id: number, field: K, value: Clinic[K]) {
+    clinics = clinics.map((c) => (c.id === id ? { ...c, [field]: value } : c));
+  }
+
+  function toggleClinicDay(clinicId: number, dayKey: string) {
+    clinics = clinics.map((c) => {
+      if (c.id !== clinicId) return c;
+      return {
+        ...c,
+        days: c.days.map((d) => {
+          if (d.key !== dayKey) return d;
+          const nowOff = !d.isOff;
+          return {
+            ...d,
+            isOff: nowOff,
+            slots: nowOff ? [] : [{ id: ++slotIdCounter, from: '09:00', to: '17:00' }]
+          };
+        })
+      };
+    });
+  }
+
+  function addSlot(clinicId: number, dayKey: string) {
+    clinics = clinics.map((c) => {
+      if (c.id !== clinicId) return c;
+      return {
+        ...c,
+        days: c.days.map((d) => {
+          if (d.key !== dayKey || d.isOff) return d;
+          return { ...d, slots: [...d.slots, { id: ++slotIdCounter, from: '09:00', to: '17:00' }] };
+        })
+      };
+    });
+  }
+
+  function removeSlot(clinicId: number, dayKey: string, slotId: number) {
+    clinics = clinics.map((c) => {
+      if (c.id !== clinicId) return c;
+      return {
+        ...c,
+        days: c.days.map((d) => {
+          if (d.key !== dayKey) return d;
+          const newSlots = d.slots.filter((s) => s.id !== slotId);
+          return { ...d, slots: newSlots, isOff: newSlots.length === 0 };
+        })
+      };
+    });
+  }
+
+  function updateSlot(clinicId: number, dayKey: string, slotId: number, field: 'from' | 'to', value: string) {
+    clinics = clinics.map((c) => {
+      if (c.id !== clinicId) return c;
+      return {
+        ...c,
+        days: c.days.map((d) => {
+          if (d.key !== dayKey) return d;
+          return { ...d, slots: d.slots.map((s) => (s.id === slotId ? { ...s, [field]: value } : s)) };
+        })
+      };
+    });
+  }
 
   // ---------------- Weekly schedule ----------------
 
@@ -925,6 +1093,242 @@ import { goto } from '$app/navigation';
 
 
 
+
+
+    <!-- ===== CLINICS / HOSPITALS ===== -->
+    <section class="panel clinics-panel">
+
+      <div class="panel-header">
+        <div class="panel-header-icon">
+          <MapPin size={20} />
+        </div>
+        <div>
+          <h3>العيادات والمستشفيات</h3>
+          <p>أضف أماكن عملك وحدد مواعيد الكشف لكل يوم</p>
+        </div>
+        <button class="add-clinic-btn" onclick={addClinic} aria-label="إضافة عيادة أو مستشفى">
+          <Plus size={16} />
+          إضافة مكان
+        </button>
+      </div>
+
+      {#if clinics.length === 0}
+        <div class="clinics-empty">
+          <Building2 size={36} />
+          <p>لم تُضف أي عيادة أو مستشفى بعد</p>
+          <button class="add-clinic-btn" onclick={addClinic}>
+            <Plus size={15} />
+            إضافة أول مكان
+          </button>
+        </div>
+      {:else}
+        <div class="clinics-list">
+          {#each clinics as clinic (clinic.id)}
+            <div class="clinic-card" class:expanded={expandedClinicIds.includes(clinic.id)}>
+
+              <!-- clinic header row -->
+              <div class="clinic-card-head">
+
+                <span class="clinic-type-badge" class:hospital={clinic.type === 'hospital'}>
+                  {#if clinic.type === 'hospital'}
+                    <Building2 size={13} />
+                    مستشفى
+                  {:else}
+                    <MapPin size={13} />
+                    عيادة
+                  {/if}
+                </span>
+
+                <div class="clinic-head-info">
+                  <strong>{clinic.name}</strong>
+                  {#if clinic.address}
+                    <span>{clinic.address}</span>
+                  {/if}
+                </div>
+
+                <div class="clinic-head-actions">
+                  <button
+                    class="clinic-expand-btn"
+                    onclick={() => toggleClinicExpand(clinic.id)}
+                    aria-expanded={expandedClinicIds.includes(clinic.id)}
+                    aria-label="توسيع تفاصيل العيادة"
+                  >
+                    {#if expandedClinicIds.includes(clinic.id)}
+                      <ChevronUp size={17} />
+                    {:else}
+                      <ChevronDown size={17} />
+                    {/if}
+                  </button>
+                  <button
+                    class="clinic-remove-btn"
+                    onclick={() => removeClinic(clinic.id)}
+                    aria-label="حذف هذا المكان"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+
+              </div>
+
+              <!-- expandable body -->
+              {#if expandedClinicIds.includes(clinic.id)}
+                <div class="clinic-body">
+
+                  <!-- basic info fields -->
+                  <div class="clinic-fields">
+
+                    <div class="clinic-field">
+                      <label for="clinic-type-{clinic.id}">نوع المكان</label>
+                      <select
+                        id="clinic-type-{clinic.id}"
+                        value={clinic.type}
+                        onchange={(e) => updateClinicField(clinic.id, 'type', (e.target as HTMLSelectElement).value as PlaceType)}
+                      >
+                        <option value="clinic">عيادة خاصة</option>
+                        <option value="hospital">مستشفى / مركز طبي</option>
+                      </select>
+                    </div>
+
+                    <div class="clinic-field">
+                      <label for="clinic-name-{clinic.id}">اسم المكان</label>
+                      <input
+                        id="clinic-name-{clinic.id}"
+                        type="text"
+                        placeholder="مثال: عيادة دكتور أحمد"
+                        value={clinic.name}
+                        oninput={(e) => updateClinicField(clinic.id, 'name', (e.target as HTMLInputElement).value)}
+                      />
+                    </div>
+
+                    <div class="clinic-field clinic-field-wide">
+                      <label for="clinic-address-{clinic.id}">العنوان</label>
+                      <input
+                        id="clinic-address-{clinic.id}"
+                        type="text"
+                        placeholder="المحافظة، الحي، اسم الشارع"
+                        value={clinic.address}
+                        oninput={(e) => updateClinicField(clinic.id, 'address', (e.target as HTMLInputElement).value)}
+                      />
+                    </div>
+
+                    <div class="clinic-field">
+                      <label for="clinic-phone-{clinic.id}">رقم التليفون</label>
+                      <input
+                        id="clinic-phone-{clinic.id}"
+                        type="tel"
+                        placeholder="01x xxxx xxxx"
+                        value={clinic.phone}
+                        oninput={(e) => updateClinicField(clinic.id, 'phone', (e.target as HTMLInputElement).value)}
+                      />
+                    </div>
+
+                    <div class="clinic-field">
+                      <label for="clinic-fee-{clinic.id}">سعر الكشف (ج.م)</label>
+                      <div class="clinic-fee-wrap">
+                        <input
+                          id="clinic-fee-{clinic.id}"
+                          type="number"
+                          min="0"
+                          step="50"
+                          value={clinic.consultFee}
+                          oninput={(e) => updateClinicField(clinic.id, 'consultFee', Number((e.target as HTMLInputElement).value))}
+                        />
+                        <span>ج.م</span>
+                      </div>
+                    </div>
+
+                  </div>
+
+                  <!-- weekly schedule for this clinic -->
+                  <div class="clinic-schedule">
+
+                    <h4 class="clinic-schedule-title">
+                      <Clock size={15} />
+                      مواعيد الكشف الأسبوعية
+                    </h4>
+
+                    <div class="clinic-days-list">
+                      {#each clinic.days as day (day.key)}
+                        <div class="clinic-day-row" class:is-off={day.isOff}>
+
+                          <!-- day toggle + label -->
+                          <div class="clinic-day-label">
+                            <button
+                              class="switch small"
+                              class:on={!day.isOff}
+                              role="switch"
+                              aria-checked={!day.isOff}
+                              aria-label={`تفعيل يوم ${day.label}`}
+                              onclick={() => toggleClinicDay(clinic.id, day.key)}
+                            >
+                              <span class="switch-thumb"></span>
+                            </button>
+                            <strong>{day.label}</strong>
+                          </div>
+
+                          <!-- slots or off tag -->
+                          {#if day.isOff}
+                            <span class="schedule-off-tag">يوم عطلة / غير متاح</span>
+                          {:else}
+                            <div class="clinic-slots">
+                              {#each day.slots as slot (slot.id)}
+                                <div class="clinic-slot">
+                                  <label>
+                                    <span>من</span>
+                                    <input
+                                      type="time"
+                                      value={slot.from}
+                                      onchange={(e) => updateSlot(clinic.id, day.key, slot.id, 'from', (e.target as HTMLInputElement).value)}
+                                    />
+                                    <small>{formatTime(slot.from)}</small>
+                                  </label>
+                                  <label>
+                                    <span>إلى</span>
+                                    <input
+                                      type="time"
+                                      value={slot.to}
+                                      onchange={(e) => updateSlot(clinic.id, day.key, slot.id, 'to', (e.target as HTMLInputElement).value)}
+                                    />
+                                    <small>{formatTime(slot.to)}</small>
+                                  </label>
+                                  {#if day.slots.length > 1}
+                                    <button
+                                      class="slot-remove-btn"
+                                      onclick={() => removeSlot(clinic.id, day.key, slot.id)}
+                                      aria-label="حذف هذا الميعاد"
+                                    >
+                                      <X size={13} />
+                                    </button>
+                                  {/if}
+                                </div>
+                              {/each}
+
+                              <button
+                                class="slot-add-btn"
+                                onclick={() => addSlot(clinic.id, day.key)}
+                                aria-label="إضافة فترة أخرى"
+                              >
+                                <Plus size={13} />
+                                فترة أخرى
+                              </button>
+                            </div>
+                          {/if}
+
+                        </div>
+                      {/each}
+                    </div>
+
+                  </div>
+
+                </div>
+              {/if}
+
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+    </section>
 
 
     <!-- Weekly schedule -->
@@ -3003,5 +3407,433 @@ import { goto } from '$app/navigation';
       height: 93svh;
       border-radius: 20px 20px 0 0;
     }
+  }
+
+  /* ============================================================
+     CLINICS / HOSPITALS
+  ============================================================ */
+
+  .clinics-panel .panel-header {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .add-clinic-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.84rem;
+    font-weight: 700;
+    color: var(--pine);
+    background: var(--pine-mist);
+    border: 1.5px solid var(--pine-light);
+    padding: 8px 18px;
+    border-radius: 999px;
+    margin-inline-start: auto;
+    transition: background-color 0.15s, color 0.15s, transform 0.15s;
+    flex-shrink: 0;
+  }
+
+  .add-clinic-btn:hover {
+    background: var(--pine);
+    color: var(--paper);
+    transform: translateY(-1px);
+  }
+
+  /* empty state */
+  .clinics-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 40px 20px;
+    color: var(--ink-soft);
+    text-align: center;
+    border: 2px dashed var(--line);
+    border-radius: 18px;
+  }
+
+  .clinics-empty :global(svg) { opacity: 0.3; }
+
+  .clinics-empty p {
+    font-size: 0.9rem;
+    color: var(--ink-soft);
+  }
+
+  /* list of clinic cards */
+  .clinics-list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  /* ── single clinic card ── */
+  .clinic-card {
+    border: 1.5px solid var(--line);
+    border-radius: 18px;
+    overflow: hidden;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+
+  .clinic-card.expanded {
+    border-color: var(--pine-light);
+    box-shadow: 0 4px 20px -8px rgba(22, 56, 50, 0.15);
+  }
+
+  /* card header row */
+  .clinic-card-head {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 20px;
+    background: var(--paper-warm);
+    cursor: default;
+    flex-wrap: wrap;
+  }
+
+  .clinic-type-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: var(--pine-mist);
+    color: var(--pine);
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .clinic-type-badge.hospital {
+    background: var(--info-mist);
+    color: var(--info);
+  }
+
+  .clinic-head-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .clinic-head-info strong {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .clinic-head-info span {
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .clinic-head-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .clinic-expand-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ink-soft);
+    transition: background-color 0.15s, color 0.15s;
+  }
+
+  .clinic-expand-btn:hover {
+    background: var(--pine-mist);
+    color: var(--pine);
+  }
+
+  .clinic-remove-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ink-muted);
+    transition: background-color 0.15s, color 0.15s;
+  }
+
+  .clinic-remove-btn:hover {
+    background: var(--danger-mist);
+    color: var(--danger);
+  }
+
+  /* expandable body */
+  .clinic-body {
+    padding: 20px;
+    border-top: 1px dashed var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    background: var(--white);
+  }
+
+  /* basic info fields grid */
+  .clinic-fields {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .clinic-field-wide {
+    grid-column: span 2;
+  }
+
+  @media (max-width: 700px) {
+    .clinic-fields {
+      grid-template-columns: 1fr 1fr;
+    }
+    .clinic-field-wide {
+      grid-column: span 2;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .clinic-fields {
+      grid-template-columns: 1fr;
+    }
+    .clinic-field-wide {
+      grid-column: span 1;
+    }
+  }
+
+  .clinic-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .clinic-field label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  .clinic-field input,
+  .clinic-field select {
+    font-family: var(--font-body);
+    font-size: 0.9rem;
+    color: var(--ink);
+    background: var(--paper-deep);
+    border: 1.5px solid var(--line);
+    border-radius: 12px;
+    padding: 10px 14px;
+    transition: border-color 0.15s;
+    width: 100%;
+  }
+
+  .clinic-field input:focus,
+  .clinic-field select:focus {
+    border-color: var(--pine-light);
+    outline: none;
+    background: var(--white);
+  }
+
+  .clinic-fee-wrap {
+    display: flex;
+    align-items: center;
+    background: var(--paper-deep);
+    border: 1.5px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: border-color 0.15s;
+  }
+
+  .clinic-fee-wrap:focus-within {
+    border-color: var(--pine-light);
+    background: var(--white);
+  }
+
+  .clinic-fee-wrap input {
+    flex: 1;
+    border: none;
+    background: none;
+    font-family: var(--font-head);
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--pine);
+    padding: 10px 14px;
+    text-align: right;
+  }
+
+  .clinic-fee-wrap input:focus { outline: none; }
+
+  .clinic-fee-wrap span {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--ink-soft);
+    padding-inline-end: 12px;
+    flex-shrink: 0;
+  }
+
+  /* clinic weekly schedule */
+  .clinic-schedule {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-top: 20px;
+    border-top: 1px dashed var(--line);
+  }
+
+  .clinic-schedule-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--pine);
+    font-family: var(--font-body);
+    margin: 0;
+  }
+
+  .clinic-schedule-title :global(svg) {
+    color: var(--gold);
+    flex-shrink: 0;
+  }
+
+  .clinic-days-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .clinic-day-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: var(--pine-mist);
+    flex-wrap: wrap;
+  }
+
+  .clinic-day-row.is-off {
+    background: var(--paper-deep);
+    opacity: 0.75;
+  }
+
+  .clinic-day-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 110px;
+    padding-top: 2px;
+  }
+
+  .clinic-day-label strong {
+    font-size: 0.88rem;
+    color: var(--ink);
+  }
+
+  /* slots column */
+  .clinic-slots {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .clinic-slot {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .clinic-slot label {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.8rem;
+    color: var(--ink-soft);
+  }
+
+  .clinic-slot label span {
+    font-weight: 600;
+    color: var(--ink);
+    min-width: 18px;
+  }
+
+  .clinic-slot input[type='time'] {
+    font-family: var(--font-body);
+    font-size: 0.86rem;
+    color: var(--ink);
+    background: var(--white);
+    border: 1.5px solid var(--line);
+    border-radius: 10px;
+    padding: 6px 10px;
+    transition: border-color 0.15s;
+  }
+
+  .clinic-slot input[type='time']:focus {
+    border-color: var(--pine-light);
+    outline: none;
+  }
+
+  .clinic-slot small {
+    color: var(--gold);
+    font-weight: 600;
+    font-size: 0.78rem;
+    direction: ltr;
+    min-width: 70px;
+  }
+
+  .slot-remove-btn {
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ink-muted);
+    flex-shrink: 0;
+    transition: background-color 0.15s, color 0.15s;
+  }
+
+  .slot-remove-btn:hover {
+    background: var(--danger-mist);
+    color: var(--danger);
+  }
+
+  .slot-add-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--pine-light);
+    background: none;
+    border: 1.5px dashed var(--pine-light);
+    padding: 5px 13px;
+    border-radius: 999px;
+    align-self: flex-start;
+    transition: background-color 0.15s, color 0.15s;
+  }
+
+  .slot-add-btn:hover {
+    background: var(--pine-mist);
+    color: var(--pine);
+  }
+
+  @media (max-width: 580px) {
+    .clinic-card-head { flex-wrap: wrap; }
+    .clinic-day-row   { flex-direction: column; }
+    .clinic-slot      { flex-direction: column; align-items: flex-start; }
   }
 </style>
