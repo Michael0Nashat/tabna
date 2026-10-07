@@ -197,21 +197,6 @@ import { goto } from '$app/navigation';
     { key: 'video', label: 'Video Call', icon: 'Video' }
   ];
 
-  // ---------------- Consultation rules ----------------
-
-  const durationOptions = [
-    { value: '15', label: '15 دقيقة' },
-    { value: '20', label: '20 دقيقة (موصى بها)' },
-    { value: '30', label: '30 دقيقة' },
-    { value: '45', label: '45 دقيقة' }
-  ];
-
-  let consultationDuration = $state('20');
-  let maxPatientsPerHour = $state(3);
-
-  let acceptInstant = $state(true);
-  let acceptScheduled = $state(true);
-
   // ---------------- Weekly schedule ----------------
 
   let schedule = $state([
@@ -293,17 +278,6 @@ import { goto } from '$app/navigation';
   function dismissNotif(id: number) {
     notifications = notifications.filter((n) => n.id !== id);
   }
-
-  // ---------------- Break time between consultations ----------------
-
-  const breakOptions = [
-    { value: '0', label: 'بدون استراحة' },
-    { value: '5', label: '5 دقائق' },
-    { value: '10', label: '10 دقائق (موصى بها)' },
-    { value: '15', label: '15 دقيقة' }
-  ];
-
-  let breakBetweenConsultations = $state('5');
 
   // ---------------- Patients list ----------------
 
@@ -950,65 +924,7 @@ import { goto } from '$app/navigation';
     </section>
 
 
-    <!-- Consultation rules -->
-    <section class="panel">
 
-      <div class="panel-header">
-        <div class="panel-header-icon">
-          <Clock3 size={20} />
-        </div>
-        <div>
-          <h3>قواعد الاستشارة</h3>
-          <p>مدة الكشف، وعدد المرضى المقبول استقبالهم بالساعة</p>
-        </div>
-      </div>
-
-      <div class="rules-grid">
-
-        <label class="field">
-          <span>مدة الاستشارة الواحدة (بالدقائق)</span>
-          <select bind:value={consultationDuration}>
-            {#each durationOptions as opt}
-              <option value={opt.value}>{opt.label}</option>
-            {/each}
-          </select>
-        </label>
-
-        <label class="field">
-          <span>أقصى عدد مرضى في الساعة</span>
-          <input type="number" min="1" max="10" bind:value={maxPatientsPerHour} />
-        </label>
-
-        <label class="field">
-          <span>وقت الاستراحة بين الاستشارات</span>
-          <select bind:value={breakBetweenConsultations}>
-            {#each breakOptions as opt}
-              <option value={opt.value}>{opt.label}</option>
-            {/each}
-          </select>
-        </label>
-
-      </div>
-
-      <div class="booking-types">
-
-        <span class="booking-types-label">أنواع الحجوزات المقبولة</span>
-
-        <label class="checkbox-row">
-          <input type="checkbox" bind:checked={acceptInstant} />
-          <span class="checkbox-box"><CheckCircle2 size={14} /></span>
-          <span>قبول الاستشارات الفورية (Instant Consultation)</span>
-        </label>
-
-        <label class="checkbox-row">
-          <input type="checkbox" bind:checked={acceptScheduled} />
-          <span class="checkbox-box"><CheckCircle2 size={14} /></span>
-          <span>قبول الحجوزات المجدولة (Scheduled Consultation)</span>
-        </label>
-
-      </div>
-
-    </section>
 
 
     <!-- Weekly schedule -->
