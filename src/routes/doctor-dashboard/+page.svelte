@@ -365,26 +365,6 @@ import { goto } from '$app/navigation';
     });
   }
 
-  // ---------------- Weekly schedule ----------------
-
-  let schedule = $state([
-    { key: 'sat', label: 'السبت', isOff: false, from: '16:00', to: '22:00' },
-    { key: 'sun', label: 'الأحد', isOff: true, from: '10:00', to: '18:00' },
-    { key: 'mon', label: 'الاثنين', isOff: true, from: '10:00', to: '18:00' },
-    { key: 'tue', label: 'الثلاثاء', isOff: true, from: '10:00', to: '18:00' },
-    { key: 'wed', label: 'الأربعاء', isOff: false, from: '17:00', to: '23:00' },
-    { key: 'thu', label: 'الخميس', isOff: false, from: '16:00', to: '22:00' },
-    { key: 'fri', label: 'الجمعة', isOff: false, from: '14:00', to: '20:00' }
-  ]);
-
-  function toggleDayOff(key: string) {
-    schedule = schedule.map((d) => (d.key === key ? { ...d, isOff: !d.isOff } : d));
-  }
-
-  function updateDayTime(key: string, field: 'from' | 'to', value: string) {
-    schedule = schedule.map((d) => (d.key === key ? { ...d, [field]: value } : d));
-  }
-
   function formatTime(time24: string) {
     const [h, m] = time24.split(':').map(Number);
     const period = h >= 12 ? 'PM' : 'AM';
@@ -1331,72 +1311,6 @@ import { goto } from '$app/navigation';
     </section>
 
 
-    <!-- Weekly schedule -->
-    <section class="panel">
-
-      <div class="panel-header">
-        <div class="panel-header-icon">
-          <CalendarDays size={20} />
-        </div>
-        <div>
-          <h3>جدول أيام وساعات العمل الأسبوعية</h3>
-          <p>حدد الأيام المتاحة للعمل ومواعيد بداية ونهاية كل يوم</p>
-        </div>
-      </div>
-
-      <div class="schedule-list">
-
-        {#each schedule as day}
-          <div class="schedule-row" class:is-off={day.isOff}>
-
-            <div class="schedule-day">
-              <button
-                class="switch small"
-                class:on={!day.isOff}
-                role="switch"
-                aria-checked={!day.isOff}
-                aria-label={`تفعيل يوم ${day.label}`}
-                onclick={() => toggleDayOff(day.key)}
-              >
-                <span class="switch-thumb"></span>
-              </button>
-              <strong>{day.label}</strong>
-            </div>
-
-            {#if day.isOff}
-              <span class="schedule-off-tag">يوم عطلة / غير متاح</span>
-            {:else}
-              <div class="schedule-times">
-
-                <label>
-                  <span>من</span>
-                  <input
-                    type="time"
-                    value={day.from}
-                    onchange={(e) => updateDayTime(day.key, 'from', (e.target as HTMLInputElement).value)}
-                  />
-                  <small>{formatTime(day.from)}</small>
-                </label>
-
-                <label>
-                  <span>إلى</span>
-                  <input
-                    type="time"
-                    value={day.to}
-                    onchange={(e) => updateDayTime(day.key, 'to', (e.target as HTMLInputElement).value)}
-                  />
-                  <small>{formatTime(day.to)}</small>
-                </label>
-
-              </div>
-            {/if}
-
-          </div>
-        {/each}
-
-      </div>
-
-    </section>
 
 
     <!-- Footer actions -->
@@ -2321,83 +2235,6 @@ import { goto } from '$app/navigation';
     background: var(--pine);
     border-color: var(--pine);
     color: var(--paper);
-  }
-
-  /* ---------------- Weekly schedule ---------------- */
-  .schedule-list {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .schedule-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    flex-wrap: wrap;
-    padding: 14px 16px;
-    border-radius: 14px;
-    background: var(--paper-deep);
-  }
-
-  .schedule-row:not(.is-off) {
-    background: var(--pine-mist);
-  }
-
-  .schedule-day {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    min-width: 130px;
-  }
-
-  .schedule-day strong {
-    font-size: 0.92rem;
-    color: var(--ink);
-  }
-
-  .schedule-off-tag {
-    font-size: 0.85rem;
-    color: var(--ink-soft);
-  }
-
-  .schedule-times {
-    display: flex;
-    align-items: center;
-    gap: 20px;
-    flex-wrap: wrap;
-  }
-
-  .schedule-times label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 0.82rem;
-    color: var(--ink-soft);
-  }
-
-  .schedule-times input[type='time'] {
-    font-family: var(--font-body);
-    font-size: 0.88rem;
-    color: var(--ink);
-    background: var(--white);
-    border: 1.5px solid var(--line);
-    border-radius: 10px;
-    padding: 7px 10px;
-  }
-
-  .schedule-times small {
-    color: var(--gold);
-    font-weight: 600;
-    direction: ltr;
-  }
-
-  @media (max-width: 640px) {
-    .schedule-row {
-      flex-direction: column;
-      align-items: flex-start;
-    }
   }
 
   /* ---------------- Page actions ---------------- */
@@ -3689,6 +3526,11 @@ import { goto } from '$app/navigation';
     gap: 12px;
     padding-top: 20px;
     border-top: 1px dashed var(--line);
+  }
+
+  .schedule-off-tag {
+    font-size: 0.85rem;
+    color: var(--ink-soft);
   }
 
   .clinic-schedule-title {
