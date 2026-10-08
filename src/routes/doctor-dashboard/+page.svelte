@@ -546,16 +546,13 @@ import { goto } from '$app/navigation';
   }
 
   function updateSlot(localId: number, dayOfWeek: number, slotId: number, field: 'from' | 'to', value: string) {
-    clinics = clinics.map((c) => {
-      if (c.localId !== localId) return c;
-      return {
-        ...c,
-        days: c.days.map((d) => {
-          if (d.dayOfWeek !== dayOfWeek) return d;
-          return { ...d, slots: d.slots.map((s) => (s.id === slotId ? { ...s, [field]: value } : s)) };
-        })
-      };
-    });
+    const clinic = clinics.find((c) => c.localId === localId);
+    if (!clinic) return;
+    const day = clinic.days.find((d) => d.dayOfWeek === dayOfWeek);
+    if (!day) return;
+    const slot = day.slots.find((s) => s.id === slotId);
+    if (!slot) return;
+    slot[field] = value;
   }
 
   function formatTime(time24: string) {
@@ -1516,25 +1513,21 @@ import { goto } from '$app/navigation';
                                 <div class="clinic-slot">
                                   <label>
                                     <span>من</span>
-                                    {#key slot.from}
                                     <input
                                       type="time"
                                       value={slot.from}
                                       oninput={(e) => updateSlot(clinic.localId, day.dayOfWeek, slot.id, 'from', (e.target as HTMLInputElement).value)}
                                     />
-                                    {/key}
                                     <small>{formatTime(slot.from)}</small>
                                   </label>
                                   <label>
                                     <span>إلى</span>
-                                    {#key slot.to}
                                     <input
                                       type="time"
                                       value={slot.to}
                                       min={slot.from}
                                       oninput={(e) => updateSlot(clinic.localId, day.dayOfWeek, slot.id, 'to', (e.target as HTMLInputElement).value)}
                                     />
-                                    {/key}
                                     <small>{formatTime(slot.to)}</small>
                                   </label>
                                   {#if day.slots.length > 1}
