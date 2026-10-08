@@ -405,7 +405,7 @@ import { goto } from '$app/navigation';
   let clinics          = $state<Clinic[]>([]);
   let clinicsLoading   = $state(false);
   let clinicsError     = $state('');
-  let slotIdCounter    = $state(1);
+  let slotIdCounter    = 0;
   let localIdCounter   = $state(1);
 
   // expanded / collapsed per localId
@@ -571,16 +571,19 @@ import { goto } from '$app/navigation';
   async function saveClinic(clinic: Clinic): Promise<ClinicDay[]> {
     if (!doctor?.id) throw new Error('لم يتم تحديد الطبيب');
 
+    // Always read the latest state — the passed `clinic` may be a stale snapshot
+    const latest = clinics.find((c) => c.localId === clinic.localId) ?? clinic;
+
     const body = {
       doctor_id:  doctor.id,
-      place_type: toApiType(clinic.type),
-      name:       clinic.name.trim(),
-      address:    clinic.address.trim(),
-      phone:      clinic.phone.trim(),
-      exam_price: clinic.consultFee || null,
+      place_type: toApiType(latest.type),
+      name:       latest.name.trim(),
+      address:    latest.address.trim(),
+      phone:      latest.phone.trim(),
+      exam_price: latest.consultFee || null,
     };
 
-    let apiId = clinic.apiId;
+    let apiId = latest.apiId;
 
     if (!apiId) {
       // Create
@@ -594,7 +597,7 @@ import { goto } from '$app/navigation';
       apiId = (data?.work_place as ApiWorkPlace)?.id ?? '';
       if (!apiId) throw new Error('لم يُرجع السيرفر معرّف المكان');
       // Persist the new apiId immediately so Delete works if Save fails below
-      clinics = clinics.map((c) => c.localId === clinic.localId ? { ...c, apiId } : c);
+      clinics = clinics.map((c) => c.localId === latest.localId ? { ...c, apiId } : c);
     } else {
       // Update
       const res  = await fetch(`${WORK_PLACES_API}/${apiId}`, {
@@ -606,11 +609,13 @@ import { goto } from '$app/navigation';
       if (!res.ok) throw new Error(data?.error ?? `فشل التحديث (${res.status})`);
     }
 
-    // Save schedules
-    const schedRes  = await fetch(`${WORK_PLACES_API}/${apiId}/schedules`, {
+    // Re-read latest days right before building the payload (user may have edited after loop started)
+    const currentDays = (clinics.find((c) => c.localId === latest.localId) ?? latest).days;
+    const schedPayload = { schedules: daysToSchedules(currentDays) };
+    const schedRes = await fetch(`${WORK_PLACES_API}/${apiId}/schedules`, {
       method:  'POST',
       headers: { 'content-type': 'application/json' },
-      body:    JSON.stringify({ schedules: daysToSchedules(clinic.days) }),
+      body:    JSON.stringify(schedPayload),
     });
     const schedData = await schedRes.json();
     if (!schedRes.ok) throw new Error(schedData?.error ?? `فشل حفظ المواعيد (${schedRes.status})`);
