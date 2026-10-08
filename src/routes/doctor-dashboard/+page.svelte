@@ -360,7 +360,12 @@ import { goto } from '$app/navigation';
       if (day.isOff || day.slots.length === 0) {
         out.push({ day_of_week: day.dayOfWeek, is_off: true });
       } else {
-        const validSlots = day.slots.filter((slot) => slot.from && slot.to && slot.from < slot.to);
+        const validSlots = day.slots.filter((slot) => {
+          if (!slot.from || !slot.to) return false;
+          // Normalize to zero-padded HH:MM before comparing to handle non-padded API values
+          const pad = (t: string) => t.split(':').map((p) => p.padStart(2, '0')).join(':');
+          return pad(slot.from) < pad(slot.to);
+        });
         if (validSlots.length === 0) {
           out.push({ day_of_week: day.dayOfWeek, is_off: true });
         } else {
@@ -508,11 +513,16 @@ import { goto } from '$app/navigation';
         days: c.days.map((d) => {
           if (d.dayOfWeek !== dayOfWeek) return d;
           const nowOff = !d.isOff;
-          return {
-            ...d,
-            isOff: nowOff,
-            slots: nowOff ? [] : [{ id: ++slotIdCounter, from: '09:00', to: '17:00' }]
-          };
+          if (nowOff) {
+            // Going off → keep slots in memory so they restore if toggled back on
+            return { ...d, isOff: true };
+          } else {
+            // Going on → restore previous slots if any, otherwise add a default slot
+            const restored = d.slots.length > 0
+              ? d.slots
+              : [{ id: ++slotIdCounter, from: '09:00', to: '17:00' }];
+            return { ...d, isOff: false, slots: restored };
+          }
         })
       };
     });
@@ -548,8 +558,8 @@ import { goto } from '$app/navigation';
   function formatTime(time24: string) {
     if (!time24 || !time24.includes(':')) return '';
     const [h, m] = time24.split(':').map(Number);
-    if (isNaN(h) || isNaN(m)) return '';
-    const period = h >= 12 ? 'PM' : 'AM';
+    if (isNaN(h) || isNaN(m) || h > 23 || m > 59) return '';
+    const period = h >= 12 ? 'م' : 'ص';
     const hour12 = h % 12 === 0 ? 12 : h % 12;
     return `${hour12.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')} ${period}`;
   }
@@ -684,8 +694,8 @@ import { goto } from '$app/navigation';
       consultType: 'chat',
       waitSince: 'منذ 5 دقائق',
       messages: [
-        { id: 1, from: 'patient', text: 'السلام عليكم دكتور، أعاني من آلام حادة في أسفل البطن منذ يومين ولا أعرف سببها', time: '4:52 م' },
-        { id: 2, from: 'patient', text: 'الألم يزداد بالليل وعندي إفرازات غير طبيعية', time: '4:53 م' }
+        { id: 1, from: 'patient', text: 'السلام عليكم دكتور، أعاني من آلام حادة في أسفل البطن منذ يومين ولا أعرف سببها', time: '04:52 م' },
+        { id: 2, from: 'patient', text: 'الألم يزداد بالليل وعندي إفرازات غير طبيعية', time: '04:53 م' }
       ]
     },
     {
@@ -698,10 +708,10 @@ import { goto } from '$app/navigation';
       consultType: 'video',
       waitSince: 'منذ 18 دقيقة',
       messages: [
-        { id: 1, from: 'patient', text: 'دكتور أنا ولدت منذ 3 أسابيع وعندي بعض الأسئلة عن الرضاعة', time: '4:30 م' },
-        { id: 2, from: 'doctor', text: 'أهلاً منى، تفضلي اسأليني وأنا في خدمتك', time: '4:31 م' },
-        { id: 3, from: 'patient', text: 'الطفل لا يرضع بشكل كافٍ وأنا قلقة جداً، هل هذا طبيعي؟', time: '4:33 م' },
-        { id: 4, from: 'doctor', text: 'هذا وارد في الأسابيع الأولى. كمية الرضاعة ستزيد تدريجياً مع الوقت. تأكدي أن وضعية الإمساك صحيحة ورضعي كل 2-3 ساعات', time: '4:35 م' }
+        { id: 1, from: 'patient', text: 'دكتور أنا ولدت منذ 3 أسابيع وعندي بعض الأسئلة عن الرضاعة', time: '04:30 م' },
+        { id: 2, from: 'doctor', text: 'أهلاً منى، تفضلي اسأليني وأنا في خدمتك', time: '04:31 م' },
+        { id: 3, from: 'patient', text: 'الطفل لا يرضع بشكل كافٍ وأنا قلقة جداً، هل هذا طبيعي؟', time: '04:33 م' },
+        { id: 4, from: 'doctor', text: 'هذا وارد في الأسابيع الأولى. كمية الرضاعة ستزيد تدريجياً مع الوقت. تأكدي أن وضعية الإمساك صحيحة ورضعي كل 2-3 ساعات', time: '04:35 م' }
       ]
     },
     {
@@ -714,7 +724,7 @@ import { goto } from '$app/navigation';
       consultType: 'chat',
       waitSince: 'منذ 12 دقيقة',
       messages: [
-        { id: 1, from: 'patient', text: 'دكتور دورتي تأخرت 3 أسابيع وعمل تحليل حمل طلع سلبي، ما السبب؟', time: '4:46 م' }
+        { id: 1, from: 'patient', text: 'دكتور دورتي تأخرت 3 أسابيع وعمل تحليل حمل طلع سلبي، ما السبب؟', time: '04:46 م' }
       ]
     },
     {
@@ -727,10 +737,10 @@ import { goto } from '$app/navigation';
       consultType: 'audio',
       waitSince: 'منذ ساعة',
       messages: [
-        { id: 1, from: 'patient', text: 'دكتور أنا أخطط للحمل وأريد نصائح قبل البدء', time: '3:00 م' },
-        { id: 2, from: 'doctor', text: 'أهلاً بك، ننصح بأخذ حمض الفوليك قبل الحمل بـ 3 أشهر، وعمل تحاليل شاملة', time: '3:02 م' },
-        { id: 3, from: 'patient', text: 'شكراً جزيلاً دكتور، سأتبع نصائحك', time: '3:15 م' },
-        { id: 4, from: 'doctor', text: 'بالتوفيق إن شاء الله، لا تترددي في التواصل', time: '3:16 م' }
+        { id: 1, from: 'patient', text: 'دكتور أنا أخطط للحمل وأريد نصائح قبل البدء', time: '03:00 م' },
+        { id: 2, from: 'doctor', text: 'أهلاً بك، ننصح بأخذ حمض الفوليك قبل الحمل بـ 3 أشهر، وعمل تحاليل شاملة', time: '03:02 م' },
+        { id: 3, from: 'patient', text: 'شكراً جزيلاً دكتور، سأتبع نصائحك', time: '03:15 م' },
+        { id: 4, from: 'doctor', text: 'بالتوفيق إن شاء الله، لا تترددي في التواصل', time: '03:16 م' }
       ]
     },
     {
@@ -770,7 +780,7 @@ import { goto } from '$app/navigation';
     if (!text || !activeChatPatient) return;
 
     const now = new Date();
-    const timeStr = now.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    const timeStr = now.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit', numberingSystem: 'latn' });
 
     // push into the patient's messages array
     patients = patients.map((p) => {
@@ -832,6 +842,23 @@ import { goto } from '$app/navigation';
         clinics = clinics.map((c) =>
           c.localId === clinic.localId
             ? { ...c, saveError: 'اسم المكان والعنوان مطلوبان' }
+            : c
+        );
+        anyFailed = true;
+        continue;
+      }
+
+      // Validate slot times before sending to the API
+      const invalidDays = clinic.days.filter((d) => {
+        if (d.isOff) return false;
+        const pad = (t: string) => t.split(':').map((p) => p.padStart(2, '0')).join(':');
+        return d.slots.some((s) => !s.from || !s.to || pad(s.from) >= pad(s.to));
+      });
+      if (invalidDays.length > 0) {
+        const names = invalidDays.map((d) => d.label).join('، ');
+        clinics = clinics.map((c) =>
+          c.localId === clinic.localId
+            ? { ...c, saveError: `يرجى تصحيح أوقات الكشف في: ${names}` }
             : c
         );
         anyFailed = true;
@@ -1500,7 +1527,8 @@ import { goto } from '$app/navigation';
                           {:else}
                             <div class="clinic-slots">
                               {#each day.slots as slot (slot.id)}
-                                <div class="clinic-slot">
+                                {@const slotInvalid = !!slot.from && !!slot.to && slot.from >= slot.to}
+                                <div class="clinic-slot" class:invalid={slotInvalid}>
                                   <label>
                                     <span>من</span>
                                     <input
@@ -1526,6 +1554,9 @@ import { goto } from '$app/navigation';
                                     >
                                       <X size={13} />
                                     </button>
+                                  {/if}
+                                  {#if slotInvalid}
+                                    <span class="slot-error-msg">وقت البداية يجب أن يكون قبل وقت النهاية</span>
                                   {/if}
                                 </div>
                               {/each}
@@ -3889,9 +3920,6 @@ import { goto } from '$app/navigation';
   }
 
   .slot-remove-btn {
-    width: 26px;
-    height: 26px;
-    border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
