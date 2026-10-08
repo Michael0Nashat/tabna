@@ -360,7 +360,7 @@ import { goto } from '$app/navigation';
       if (day.isOff || day.slots.length === 0) {
         out.push({ day_of_week: day.dayOfWeek, is_off: true });
       } else {
-        const validSlots = day.slots.filter((slot) => slot.from && slot.to);
+        const validSlots = day.slots.filter((slot) => slot.from && slot.to && slot.from < slot.to);
         if (validSlots.length === 0) {
           out.push({ day_of_week: day.dayOfWeek, is_off: true });
         } else {
@@ -1520,6 +1520,7 @@ import { goto } from '$app/navigation';
                                     <input
                                       type="time"
                                       value={slot.to}
+                                      min={slot.from}
                                       onchange={(e) => updateSlot(clinic.localId, day.dayOfWeek, slot.id, 'to', (e.target as HTMLInputElement).value)}
                                     />
                                     <small>{formatTime(slot.to)}</small>
