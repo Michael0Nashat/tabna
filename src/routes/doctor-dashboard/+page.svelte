@@ -360,8 +360,13 @@ import { goto } from '$app/navigation';
       if (day.isOff || day.slots.length === 0) {
         out.push({ day_of_week: day.dayOfWeek, is_off: true });
       } else {
-        for (const slot of day.slots) {
-          out.push({ day_of_week: day.dayOfWeek, is_off: false, from_time: slot.from, to_time: slot.to });
+        const validSlots = day.slots.filter((slot) => slot.from && slot.to);
+        if (validSlots.length === 0) {
+          out.push({ day_of_week: day.dayOfWeek, is_off: true });
+        } else {
+          for (const slot of validSlots) {
+            out.push({ day_of_week: day.dayOfWeek, is_off: false, from_time: slot.from, to_time: slot.to });
+          }
         }
       }
     }
@@ -554,7 +559,9 @@ import { goto } from '$app/navigation';
   }
 
   function formatTime(time24: string) {
+    if (!time24 || !time24.includes(':')) return '';
     const [h, m] = time24.split(':').map(Number);
+    if (isNaN(h) || isNaN(m)) return '';
     const period = h >= 12 ? 'PM' : 'AM';
     const hour12 = h % 12 === 0 ? 12 : h % 12;
     return `${hour12.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')} ${period}`;
