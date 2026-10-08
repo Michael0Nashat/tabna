@@ -545,16 +545,6 @@ import { goto } from '$app/navigation';
     });
   }
 
-  function updateSlot(localId: number, dayOfWeek: number, slotId: number, field: 'from' | 'to', value: string) {
-    const clinic = clinics.find((c) => c.localId === localId);
-    if (!clinic) return;
-    const day = clinic.days.find((d) => d.dayOfWeek === dayOfWeek);
-    if (!day) return;
-    const slot = day.slots.find((s) => s.id === slotId);
-    if (!slot) return;
-    slot[field] = value;
-  }
-
   function formatTime(time24: string) {
     if (!time24 || !time24.includes(':')) return '';
     const [h, m] = time24.split(':').map(Number);
@@ -1515,8 +1505,7 @@ import { goto } from '$app/navigation';
                                     <span>من</span>
                                     <input
                                       type="time"
-                                      value={slot.from}
-                                      oninput={(e) => updateSlot(clinic.localId, day.dayOfWeek, slot.id, 'from', (e.target as HTMLInputElement).value)}
+                                      bind:value={slot.from}
                                     />
                                     <small>{formatTime(slot.from)}</small>
                                   </label>
@@ -1524,9 +1513,8 @@ import { goto } from '$app/navigation';
                                     <span>إلى</span>
                                     <input
                                       type="time"
-                                      value={slot.to}
+                                      bind:value={slot.to}
                                       min={slot.from}
-                                      oninput={(e) => updateSlot(clinic.localId, day.dayOfWeek, slot.id, 'to', (e.target as HTMLInputElement).value)}
                                     />
                                     <small>{formatTime(slot.to)}</small>
                                   </label>
