@@ -1511,7 +1511,7 @@ import { goto } from '$app/navigation';
                                     <input
                                       type="time"
                                       value={slot.from}
-                                      onchange={(e) => updateSlot(clinic.localId, day.dayOfWeek, slot.id, 'from', (e.target as HTMLInputElement).value)}
+                                      oninput={(e) => updateSlot(clinic.localId, day.dayOfWeek, slot.id, 'from', (e.target as HTMLInputElement).value)}
                                     />
                                     <small>{formatTime(slot.from)}</small>
                                   </label>
@@ -1521,7 +1521,7 @@ import { goto } from '$app/navigation';
                                       type="time"
                                       value={slot.to}
                                       min={slot.from}
-                                      onchange={(e) => updateSlot(clinic.localId, day.dayOfWeek, slot.id, 'to', (e.target as HTMLInputElement).value)}
+                                      oninput={(e) => updateSlot(clinic.localId, day.dayOfWeek, slot.id, 'to', (e.target as HTMLInputElement).value)}
                                     />
                                     <small>{formatTime(slot.to)}</small>
                                   </label>
