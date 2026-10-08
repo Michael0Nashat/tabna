@@ -19,7 +19,6 @@ import { goto } from '$app/navigation';
     TrendingUp,
     Bell,
     Coffee,
-    CircleUserRound,
     BadgeCheck,
     ChevronDown,
     ChevronUp,
@@ -619,22 +618,6 @@ import { goto } from '$app/navigation';
     completedToday: 7
   };
 
-  // ---------------- Profile completion ----------------
-
-  const profileSteps: { label: string; done: boolean }[] = [
-    { label: 'صورة شخصية', done: false },
-    { label: 'نبذة عن الطبيب', done: false },
-    { label: 'تحديد التخصصات الفرعية', done: true },
-    { label: 'ربط رقم الهاتف', done: true },
-    { label: 'رفع الشهادات والتراخيص', done: false }
-  ];
-
-  const profileCompletion = $derived(
-    Math.round((profileSteps.filter((s) => s.done).length / profileSteps.length) * 100)
-  );
-
-  let showProfileSteps = $state(false);
-
   // ---------------- Pending notifications ----------------
 
   type NotifType = 'instant' | 'scheduled' | 'review';
@@ -1146,58 +1129,6 @@ import { goto } from '$app/navigation';
 
     </section>
 
-
-    <!-- ===== PROFILE COMPLETION ===== -->
-    <section class="panel completion-panel">
-
-      <div class="panel-header">
-        <div class="panel-header-icon">
-          <CircleUserRound size={20} />
-        </div>
-        <div>
-          <h3>اكتمال الملف الشخصي</h3>
-          <p>أكمل بياناتك لزيادة ظهورك في نتائج البحث</p>
-        </div>
-      </div>
-
-      <div class="completion-bar-wrap">
-        <div class="completion-bar">
-          <div class="completion-fill" style="width:{profileCompletion}%"></div>
-        </div>
-        <span class="completion-pct">{profileCompletion}%</span>
-      </div>
-
-      <button
-        class="completion-toggle"
-        onclick={() => (showProfileSteps = !showProfileSteps)}
-        aria-expanded={showProfileSteps}
-      >
-        {showProfileSteps ? 'إخفاء التفاصيل' : 'عرض ما تبقى'}
-        {#if showProfileSteps}
-          <ChevronUp size={15} />
-        {:else}
-          <ChevronDown size={15} />
-        {/if}
-      </button>
-
-      {#if showProfileSteps}
-        <ul class="completion-steps">
-          {#each profileSteps as step}
-            <li class="completion-step" class:done={step.done}>
-              <span class="step-icon">
-                {#if step.done}
-                  <BadgeCheck size={17} />
-                {:else}
-                  <AlertCircle size={17} />
-                {/if}
-              </span>
-              {step.label}
-            </li>
-          {/each}
-        </ul>
-      {/if}
-
-    </section>
 
 
     <!-- ===== PATIENTS LIST ===== -->
