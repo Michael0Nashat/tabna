@@ -348,7 +348,7 @@ import { goto } from '$app/navigation';
         ? []
         : rows
             .filter((r) => !r.is_off && r.from_time && r.to_time)
-            .map((r, i) => ({ id: i + 1, from: r.from_time!, to: r.to_time! }));
+            .map((r) => ({ id: ++slotIdCounter, from: r.from_time!, to: r.to_time! }));
       return { dayOfWeek: d.dayOfWeek, label: d.label, isOff, slots };
     });
   }
@@ -568,7 +568,7 @@ import { goto } from '$app/navigation';
   }
 
   // Save a single clinic to the API (create or update) then persist its schedules
-  async function saveClinic(clinic: Clinic): Promise<void> {
+  async function saveClinic(clinic: Clinic): Promise<ClinicDay[]> {
     if (!doctor?.id) throw new Error('لم يتم تحديد الطبيب');
 
     const body = {
@@ -614,6 +614,9 @@ import { goto } from '$app/navigation';
     });
     const schedData = await schedRes.json();
     if (!schedRes.ok) throw new Error(schedData?.error ?? `فشل حفظ المواعيد (${schedRes.status})`);
+
+    // Return updated days from server response so UI stays in sync
+    return schedulesToDays((schedData?.schedules as ApiSchedule[]) ?? []);
   }
 
   // ---------------- Today's stats ----------------
@@ -846,8 +849,8 @@ import { goto } from '$app/navigation';
       clinics = clinics.map((c) => c.localId === clinic.localId ? { ...c, saving: true } : c);
 
       try {
-        await saveClinic(clinic);
-        clinics = clinics.map((c) => c.localId === clinic.localId ? { ...c, saving: false, saveError: '' } : c);
+        const updatedDays = await saveClinic(clinic);
+        clinics = clinics.map((c) => c.localId === clinic.localId ? { ...c, saving: false, saveError: '', days: updatedDays } : c);
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'تعذّر الحفظ';
         clinics   = clinics.map((c) => c.localId === clinic.localId ? { ...c, saving: false, saveError: msg } : c);
@@ -1508,21 +1511,25 @@ import { goto } from '$app/navigation';
                                 <div class="clinic-slot">
                                   <label>
                                     <span>من</span>
+                                    {#key slot.from}
                                     <input
                                       type="time"
                                       value={slot.from}
                                       oninput={(e) => updateSlot(clinic.localId, day.dayOfWeek, slot.id, 'from', (e.target as HTMLInputElement).value)}
                                     />
+                                    {/key}
                                     <small>{formatTime(slot.from)}</small>
                                   </label>
                                   <label>
                                     <span>إلى</span>
+                                    {#key slot.to}
                                     <input
                                       type="time"
                                       value={slot.to}
                                       min={slot.from}
                                       oninput={(e) => updateSlot(clinic.localId, day.dayOfWeek, slot.id, 'to', (e.target as HTMLInputElement).value)}
                                     />
+                                    {/key}
                                     <small>{formatTime(slot.to)}</small>
                                   </label>
                                   {#if day.slots.length > 1}
