@@ -253,116 +253,256 @@ import { goto } from '$app/navigation';
 
   // ---------------- Clinics / Hospitals ----------------
 
-  type PlaceType = 'clinic' | 'hospital';
+  const WORK_PLACES_API = '/api/work-places';
+
+  // API shape returned by GET /work-places
+  interface ApiSchedule {
+    id: number;
+    work_place_id: string;
+    day_of_week: number;   // 0=السبت … 6=الجمعة
+    day_name: string;
+    is_off: boolean;
+    from_time?: string;    // "HH:MM"
+    to_time?: string;
+  }
+
+  interface ApiWorkPlace {
+    id: string;
+    doctor_id: string;
+    place_type: string;
+    name: string;
+    address: string;
+    phone?: string;
+    exam_price?: number;
+    schedules?: ApiSchedule[];
+  }
+
+  // Local UI types
+  type PlaceType = 'عيادة خاصة' | 'مستشفى' | 'مركز طبي' | 'مستوصف';
 
   interface ClinicSlot {
-    id: number;
-    from: string;
+    id: number;   // local-only counter for keying, not sent to API
+    from: string; // "HH:MM"
     to: string;
   }
 
   interface ClinicDay {
-    key: string;
+    dayOfWeek: number; // 0–6
     label: string;
     isOff: boolean;
     slots: ClinicSlot[];
   }
 
   interface Clinic {
-    id: number;
+    // API-assigned UUID once saved; empty string for new (unsaved) rows
+    apiId: string;
+    // Stable local key for Svelte {#each} tracking before the row has an apiId
+    localId: number;
     type: PlaceType;
     name: string;
     address: string;
     phone: string;
     consultFee: number;
     days: ClinicDay[];
+    // true while a save/delete request is in flight for this specific row
+    saving: boolean;
+    // non-empty when the last save for this row failed
+    saveError: string;
   }
 
-  const DAY_TEMPLATES: Omit<ClinicDay, 'slots'>[] = [
-    { key: 'sat', label: 'السبت',    isOff: false },
-    { key: 'sun', label: 'الأحد',    isOff: true  },
-    { key: 'mon', label: 'الاثنين',  isOff: true  },
-    { key: 'tue', label: 'الثلاثاء', isOff: true  },
-    { key: 'wed', label: 'الأربعاء', isOff: false },
-    { key: 'thu', label: 'الخميس',  isOff: false },
-    { key: 'fri', label: 'الجمعة',  isOff: false },
+  // Day-of-week definitions: 0=السبت … 6=الجمعة (matches the Go API)
+  const DAY_META: { dayOfWeek: number; label: string }[] = [
+    { dayOfWeek: 0, label: 'السبت'    },
+    { dayOfWeek: 1, label: 'الأحد'    },
+    { dayOfWeek: 2, label: 'الاثنين'  },
+    { dayOfWeek: 3, label: 'الثلاثاء' },
+    { dayOfWeek: 4, label: 'الأربعاء' },
+    { dayOfWeek: 5, label: 'الخميس'  },
+    { dayOfWeek: 6, label: 'الجمعة'  },
   ];
 
-  function makeDays(activeDays: string[], defaultFrom = '09:00', defaultTo = '17:00'): ClinicDay[] {
-    return DAY_TEMPLATES.map((d) => ({
-      ...d,
-      isOff: !activeDays.includes(d.key),
-      slots: activeDays.includes(d.key)
-        ? [{ id: Date.now() + Math.random(), from: defaultFrom, to: defaultTo }]
-        : []
+  // Build blank days (all off) for a brand-new clinic
+  function blankDays(): ClinicDay[] {
+    return DAY_META.map((d) => ({
+      dayOfWeek: d.dayOfWeek,
+      label: d.label,
+      isOff: true,
+      slots: []
     }));
   }
 
-  let clinics = $state<Clinic[]>([
-    {
-      id: 1,
-      type: 'clinic',
-      name: 'عيادة الدكتور الخاصة',
-      address: 'القاهرة — مدينة نصر، شارع عباس العقاد',
-      phone: '0100 000 0001',
-      consultFee: 300,
-      days: makeDays(['sat', 'wed', 'thu'], '16:00', '22:00')
-    },
-    {
-      id: 2,
-      type: 'hospital',
-      name: 'مستشفى المعادي التخصصي',
-      address: 'القاهرة — المعادي، شارع النصر',
-      phone: '0100 000 0002',
-      consultFee: 500,
-      days: makeDays(['fri'], '14:00', '20:00')
+  // Convert API schedule rows → local ClinicDay[]
+  function schedulesToDays(schedules: ApiSchedule[]): ClinicDay[] {
+    // Group by day_of_week
+    const byDay = new Map<number, ApiSchedule[]>();
+    for (const s of schedules) {
+      const arr = byDay.get(s.day_of_week) ?? [];
+      arr.push(s);
+      byDay.set(s.day_of_week, arr);
     }
-  ]);
 
-  let slotIdCounter = $state(1000);
-
-  // expanded / collapsed per clinic
-  let expandedClinicIds = $state<number[]>([1]);
-
-  function toggleClinicExpand(id: number) {
-    expandedClinicIds = expandedClinicIds.includes(id)
-      ? expandedClinicIds.filter((x) => x !== id)
-      : [...expandedClinicIds, id];
+    return DAY_META.map((d) => {
+      const rows = byDay.get(d.dayOfWeek) ?? [];
+      // A day is off when it has no rows OR all rows have is_off = true
+      const isOff = rows.length === 0 || rows.every((r) => r.is_off);
+      const slots: ClinicSlot[] = isOff
+        ? []
+        : rows
+            .filter((r) => !r.is_off && r.from_time && r.to_time)
+            .map((r, i) => ({ id: i + 1, from: r.from_time!, to: r.to_time! }));
+      return { dayOfWeek: d.dayOfWeek, label: d.label, isOff, slots };
+    });
   }
 
+  // Convert local ClinicDay[] → API schedule input array
+  function daysToSchedules(days: ClinicDay[]) {
+    const out: { day_of_week: number; is_off: boolean; from_time?: string; to_time?: string }[] = [];
+    for (const day of days) {
+      if (day.isOff || day.slots.length === 0) {
+        out.push({ day_of_week: day.dayOfWeek, is_off: true });
+      } else {
+        for (const slot of day.slots) {
+          out.push({ day_of_week: day.dayOfWeek, is_off: false, from_time: slot.from, to_time: slot.to });
+        }
+      }
+    }
+    return out;
+  }
+
+  // Map API place_type string → local UI PlaceType
+  function toLocalType(apiType: string): PlaceType {
+    const map: Record<string, PlaceType> = {
+      'عيادة خاصة': 'عيادة خاصة',
+      'مستشفى':     'مستشفى',
+      'مركز طبي':   'مركز طبي',
+      'مستوصف':     'مستوصف',
+    };
+    return map[apiType] ?? 'عيادة خاصة';
+  }
+
+  // Map local PlaceType → API place_type string (same values, kept for clarity)
+  function toApiType(t: PlaceType): string { return t; }
+
+  function apiToClinic(wp: ApiWorkPlace, localId: number): Clinic {
+    return {
+      apiId:      wp.id,
+      localId,
+      type:       toLocalType(wp.place_type),
+      name:       wp.name,
+      address:    wp.address,
+      phone:      wp.phone ?? '',
+      consultFee: wp.exam_price ?? 0,
+      days:       schedulesToDays(wp.schedules ?? []),
+      saving:     false,
+      saveError:  '',
+    };
+  }
+
+  let clinics          = $state<Clinic[]>([]);
+  let clinicsLoading   = $state(false);
+  let clinicsError     = $state('');
+  let slotIdCounter    = $state(1);
+  let localIdCounter   = $state(1);
+
+  // expanded / collapsed per localId
+  let expandedClinicIds = $state<number[]>([]);
+
+  // Load work places from the API whenever the resolved doctor changes
+  $effect(() => {
+    const id = doctor?.id;
+    if (!id) return;
+
+    clinicsLoading = true;
+    clinicsError   = '';
+
+    (async () => {
+      try {
+        const res  = await fetch(`${WORK_PLACES_API}?doctor_id=${encodeURIComponent(id)}`);
+        const data = await res.json();
+
+        if (!res.ok) throw new Error(data?.error ?? `فشل تحميل أماكن العمل (${res.status})`);
+
+        const rows: ApiWorkPlace[] = Array.isArray(data?.work_places) ? data.work_places : [];
+        let counter = localIdCounter;
+        clinics = rows.map((wp) => apiToClinic(wp, counter++));
+        localIdCounter = counter;
+
+        // auto-expand the first clinic for convenience
+        if (clinics.length > 0) expandedClinicIds = [clinics[0].localId];
+      } catch (err) {
+        clinicsError = err instanceof Error ? err.message : 'تعذّر تحميل أماكن العمل';
+      } finally {
+        clinicsLoading = false;
+      }
+    })();
+  });
+
+  function toggleClinicExpand(localId: number) {
+    expandedClinicIds = expandedClinicIds.includes(localId)
+      ? expandedClinicIds.filter((x) => x !== localId)
+      : [...expandedClinicIds, localId];
+  }
+
+  // Add a blank unsaved clinic row locally (saved on "حفظ الإعدادات")
   function addClinic() {
-    const newId = Date.now();
+    const localId = ++localIdCounter;
     clinics = [
       ...clinics,
       {
-        id: newId,
-        type: 'clinic',
-        name: 'عيادة جديدة',
-        address: '',
-        phone: '',
-        consultFee: 200,
-        days: makeDays(['sat', 'wed'])
+        apiId:      '',
+        localId,
+        type:       'عيادة خاصة',
+        name:       '',
+        address:    '',
+        phone:      '',
+        consultFee: 0,
+        days:       blankDays(),
+        saving:     false,
+        saveError:  '',
       }
     ];
-    expandedClinicIds = [...expandedClinicIds, newId];
+    expandedClinicIds = [...expandedClinicIds, localId];
   }
 
-  function removeClinic(id: number) {
-    clinics = clinics.filter((c) => c.id !== id);
-    expandedClinicIds = expandedClinicIds.filter((x) => x !== id);
+  // Delete from API if saved, then remove locally
+  async function removeClinic(localId: number) {
+    const clinic = clinics.find((c) => c.localId === localId);
+    if (!clinic) return;
+
+    // Not yet saved → just drop it locally
+    if (!clinic.apiId) {
+      clinics = clinics.filter((c) => c.localId !== localId);
+      expandedClinicIds = expandedClinicIds.filter((x) => x !== localId);
+      return;
+    }
+
+    // Mark as saving to disable the button
+    clinics = clinics.map((c) => c.localId === localId ? { ...c, saving: true, saveError: '' } : c);
+
+    try {
+      const res  = await fetch(`${WORK_PLACES_API}/${clinic.apiId}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error ?? `فشل الحذف (${res.status})`);
+
+      clinics           = clinics.filter((c) => c.localId !== localId);
+      expandedClinicIds = expandedClinicIds.filter((x) => x !== localId);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'تعذّر حذف المكان';
+      clinics = clinics.map((c) => c.localId === localId ? { ...c, saving: false, saveError: msg } : c);
+    }
   }
 
-  function updateClinicField<K extends keyof Clinic>(id: number, field: K, value: Clinic[K]) {
-    clinics = clinics.map((c) => (c.id === id ? { ...c, [field]: value } : c));
+  function updateClinicField<K extends keyof Clinic>(localId: number, field: K, value: Clinic[K]) {
+    clinics = clinics.map((c) => (c.localId === localId ? { ...c, [field]: value } : c));
   }
 
-  function toggleClinicDay(clinicId: number, dayKey: string) {
+  function toggleClinicDay(localId: number, dayOfWeek: number) {
     clinics = clinics.map((c) => {
-      if (c.id !== clinicId) return c;
+      if (c.localId !== localId) return c;
       return {
         ...c,
         days: c.days.map((d) => {
-          if (d.key !== dayKey) return d;
+          if (d.dayOfWeek !== dayOfWeek) return d;
           const nowOff = !d.isOff;
           return {
             ...d,
@@ -374,26 +514,26 @@ import { goto } from '$app/navigation';
     });
   }
 
-  function addSlot(clinicId: number, dayKey: string) {
+  function addSlot(localId: number, dayOfWeek: number) {
     clinics = clinics.map((c) => {
-      if (c.id !== clinicId) return c;
+      if (c.localId !== localId) return c;
       return {
         ...c,
         days: c.days.map((d) => {
-          if (d.key !== dayKey || d.isOff) return d;
+          if (d.dayOfWeek !== dayOfWeek || d.isOff) return d;
           return { ...d, slots: [...d.slots, { id: ++slotIdCounter, from: '09:00', to: '17:00' }] };
         })
       };
     });
   }
 
-  function removeSlot(clinicId: number, dayKey: string, slotId: number) {
+  function removeSlot(localId: number, dayOfWeek: number, slotId: number) {
     clinics = clinics.map((c) => {
-      if (c.id !== clinicId) return c;
+      if (c.localId !== localId) return c;
       return {
         ...c,
         days: c.days.map((d) => {
-          if (d.key !== dayKey) return d;
+          if (d.dayOfWeek !== dayOfWeek) return d;
           const newSlots = d.slots.filter((s) => s.id !== slotId);
           return { ...d, slots: newSlots, isOff: newSlots.length === 0 };
         })
@@ -401,13 +541,13 @@ import { goto } from '$app/navigation';
     });
   }
 
-  function updateSlot(clinicId: number, dayKey: string, slotId: number, field: 'from' | 'to', value: string) {
+  function updateSlot(localId: number, dayOfWeek: number, slotId: number, field: 'from' | 'to', value: string) {
     clinics = clinics.map((c) => {
-      if (c.id !== clinicId) return c;
+      if (c.localId !== localId) return c;
       return {
         ...c,
         days: c.days.map((d) => {
-          if (d.key !== dayKey) return d;
+          if (d.dayOfWeek !== dayOfWeek) return d;
           return { ...d, slots: d.slots.map((s) => (s.id === slotId ? { ...s, [field]: value } : s)) };
         })
       };
@@ -419,6 +559,55 @@ import { goto } from '$app/navigation';
     const period = h >= 12 ? 'PM' : 'AM';
     const hour12 = h % 12 === 0 ? 12 : h % 12;
     return `${hour12.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')} ${period}`;
+  }
+
+  // Save a single clinic to the API (create or update) then persist its schedules
+  async function saveClinic(clinic: Clinic): Promise<void> {
+    if (!doctor?.id) throw new Error('لم يتم تحديد الطبيب');
+
+    const body = {
+      doctor_id:  doctor.id,
+      place_type: toApiType(clinic.type),
+      name:       clinic.name.trim(),
+      address:    clinic.address.trim(),
+      phone:      clinic.phone.trim(),
+      exam_price: clinic.consultFee || null,
+    };
+
+    let apiId = clinic.apiId;
+
+    if (!apiId) {
+      // Create
+      const res  = await fetch(WORK_PLACES_API, {
+        method:  'POST',
+        headers: { 'content-type': 'application/json' },
+        body:    JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? `فشل الإنشاء (${res.status})`);
+      apiId = (data?.work_place as ApiWorkPlace)?.id ?? '';
+      if (!apiId) throw new Error('لم يُرجع السيرفر معرّف المكان');
+      // Persist the new apiId immediately so Delete works if Save fails below
+      clinics = clinics.map((c) => c.localId === clinic.localId ? { ...c, apiId } : c);
+    } else {
+      // Update
+      const res  = await fetch(`${WORK_PLACES_API}/${apiId}`, {
+        method:  'PUT',
+        headers: { 'content-type': 'application/json' },
+        body:    JSON.stringify({ place_type: body.place_type, name: body.name, address: body.address, phone: body.phone, exam_price: body.exam_price }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? `فشل التحديث (${res.status})`);
+    }
+
+    // Save schedules
+    const schedRes  = await fetch(`${WORK_PLACES_API}/${apiId}/schedules`, {
+      method:  'POST',
+      headers: { 'content-type': 'application/json' },
+      body:    JSON.stringify({ schedules: daysToSchedules(clinic.days) }),
+    });
+    const schedData = await schedRes.json();
+    if (!schedRes.ok) throw new Error(schedData?.error ?? `فشل حفظ المواعيد (${schedRes.status})`);
   }
 
   // ---------------- Today's stats ----------------
@@ -637,23 +826,75 @@ import { goto } from '$app/navigation';
   };
 
   // ----------------------------------------------------------------
+  // Save all clinics + reload on success
 
   let saving = $state(false);
   let savedJustNow = $state(false);
+  let saveError = $state('');
 
-  function saveSettings() {
-    if (saving) return;
-    saving = true;
-    // NOTE: wire this up to the real doctor-settings endpoint.
-    setTimeout(() => {
-      saving = false;
+  async function saveSettings() {
+    if (saving || !doctor?.id) return;
+    saving    = true;
+    saveError = '';
+
+    // Clear per-row errors
+    clinics = clinics.map((c) => ({ ...c, saveError: '' }));
+
+    let anyFailed = false;
+
+    for (const clinic of clinics) {
+      if (!clinic.name.trim() || !clinic.address.trim()) {
+        clinics = clinics.map((c) =>
+          c.localId === clinic.localId
+            ? { ...c, saveError: 'اسم المكان والعنوان مطلوبان' }
+            : c
+        );
+        anyFailed = true;
+        continue;
+      }
+
+      clinics = clinics.map((c) => c.localId === clinic.localId ? { ...c, saving: true } : c);
+
+      try {
+        await saveClinic(clinic);
+        clinics = clinics.map((c) => c.localId === clinic.localId ? { ...c, saving: false, saveError: '' } : c);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'تعذّر الحفظ';
+        clinics   = clinics.map((c) => c.localId === clinic.localId ? { ...c, saving: false, saveError: msg } : c);
+        anyFailed = true;
+      }
+    }
+
+    saving = false;
+
+    if (!anyFailed) {
       savedJustNow = true;
       setTimeout(() => (savedJustNow = false), 2400);
-    }, 700);
+    } else {
+      saveError = 'بعض الأماكن لم تُحفظ — راجع الأخطاء أدناه';
+    }
   }
 
-  function cancelChanges() {
-    // NOTE: wire this up to re-fetch/reset from the server state.
+  // Re-load from the API to discard all unsaved local changes
+  async function cancelChanges() {
+    if (!doctor?.id || saving) return;
+    clinicsLoading = true;
+    clinicsError   = '';
+    try {
+      const res  = await fetch(`${WORK_PLACES_API}?doctor_id=${encodeURIComponent(doctor.id)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? `فشل التحميل (${res.status})`);
+      const rows: ApiWorkPlace[] = Array.isArray(data?.work_places) ? data.work_places : [];
+      let counter = 1;
+      clinics = rows.map((wp) => apiToClinic(wp, counter++));
+      localIdCounter = counter;
+      if (clinics.length > 0) expandedClinicIds = [clinics[0].localId];
+      else expandedClinicIds = [];
+    } catch (err) {
+      clinicsError = err instanceof Error ? err.message : 'تعذّر إعادة التحميل';
+    } finally {
+      clinicsLoading = false;
+    }
   }
 </script>
 
@@ -1142,7 +1383,17 @@ import { goto } from '$app/navigation';
         </button>
       </div>
 
-      {#if clinics.length === 0}
+      {#if clinicsLoading}
+        <div class="clinics-empty">
+          <div class="spinner" aria-hidden="true"></div>
+          <p>جارٍ تحميل أماكن العمل…</p>
+        </div>
+      {:else if clinicsError}
+        <div class="clinics-empty">
+          <AlertCircle size={28} />
+          <p>{clinicsError}</p>
+        </div>
+      {:else if clinics.length === 0}
         <div class="clinics-empty">
           <Building2 size={36} />
           <p>لم تُضف أي عيادة أو مستشفى بعد</p>
@@ -1153,37 +1404,40 @@ import { goto } from '$app/navigation';
         </div>
       {:else}
         <div class="clinics-list">
-          {#each clinics as clinic (clinic.id)}
-            <div class="clinic-card" class:expanded={expandedClinicIds.includes(clinic.id)}>
+          {#each clinics as clinic (clinic.localId)}
+            <div class="clinic-card" class:expanded={expandedClinicIds.includes(clinic.localId)}>
 
               <!-- clinic header row -->
               <div class="clinic-card-head">
 
-                <span class="clinic-type-badge" class:hospital={clinic.type === 'hospital'}>
-                  {#if clinic.type === 'hospital'}
+                <span class="clinic-type-badge" class:hospital={clinic.type === 'مستشفى' || clinic.type === 'مركز طبي'}>
+                  {#if clinic.type === 'مستشفى' || clinic.type === 'مركز طبي'}
                     <Building2 size={13} />
-                    مستشفى
+                    {clinic.type}
                   {:else}
                     <MapPin size={13} />
-                    عيادة
+                    {clinic.type}
                   {/if}
                 </span>
 
                 <div class="clinic-head-info">
-                  <strong>{clinic.name}</strong>
+                  <strong>{clinic.name || 'مكان جديد'}</strong>
                   {#if clinic.address}
                     <span>{clinic.address}</span>
+                  {/if}
+                  {#if !clinic.apiId}
+                    <span class="clinic-unsaved-badge">غير محفوظ</span>
                   {/if}
                 </div>
 
                 <div class="clinic-head-actions">
                   <button
                     class="clinic-expand-btn"
-                    onclick={() => toggleClinicExpand(clinic.id)}
-                    aria-expanded={expandedClinicIds.includes(clinic.id)}
+                    onclick={() => toggleClinicExpand(clinic.localId)}
+                    aria-expanded={expandedClinicIds.includes(clinic.localId)}
                     aria-label="توسيع تفاصيل العيادة"
                   >
-                    {#if expandedClinicIds.includes(clinic.id)}
+                    {#if expandedClinicIds.includes(clinic.localId)}
                       <ChevronUp size={17} />
                     {:else}
                       <ChevronDown size={17} />
@@ -1191,7 +1445,8 @@ import { goto } from '$app/navigation';
                   </button>
                   <button
                     class="clinic-remove-btn"
-                    onclick={() => removeClinic(clinic.id)}
+                    disabled={clinic.saving}
+                    onclick={() => removeClinic(clinic.localId)}
                     aria-label="حذف هذا المكان"
                   >
                     <Trash2 size={15} />
@@ -1200,68 +1455,78 @@ import { goto } from '$app/navigation';
 
               </div>
 
+              <!-- per-row save error -->
+              {#if clinic.saveError}
+                <div class="clinic-row-error">
+                  <AlertCircle size={14} />
+                  {clinic.saveError}
+                </div>
+              {/if}
+
               <!-- expandable body -->
-              {#if expandedClinicIds.includes(clinic.id)}
+              {#if expandedClinicIds.includes(clinic.localId)}
                 <div class="clinic-body">
 
                   <!-- basic info fields -->
                   <div class="clinic-fields">
 
                     <div class="clinic-field">
-                      <label for="clinic-type-{clinic.id}">نوع المكان</label>
+                      <label for="clinic-type-{clinic.localId}">نوع المكان</label>
                       <select
-                        id="clinic-type-{clinic.id}"
+                        id="clinic-type-{clinic.localId}"
                         value={clinic.type}
-                        onchange={(e) => updateClinicField(clinic.id, 'type', (e.target as HTMLSelectElement).value as PlaceType)}
+                        onchange={(e) => updateClinicField(clinic.localId, 'type', (e.target as HTMLSelectElement).value as PlaceType)}
                       >
-                        <option value="clinic">عيادة خاصة</option>
-                        <option value="hospital">مستشفى / مركز طبي</option>
+                        <option value="عيادة خاصة">عيادة خاصة</option>
+                        <option value="مستشفى">مستشفى</option>
+                        <option value="مركز طبي">مركز طبي</option>
+                        <option value="مستوصف">مستوصف</option>
                       </select>
                     </div>
 
                     <div class="clinic-field">
-                      <label for="clinic-name-{clinic.id}">اسم المكان</label>
+                      <label for="clinic-name-{clinic.localId}">اسم المكان</label>
                       <input
-                        id="clinic-name-{clinic.id}"
+                        id="clinic-name-{clinic.localId}"
                         type="text"
                         placeholder="مثال: عيادة دكتور أحمد"
                         value={clinic.name}
-                        oninput={(e) => updateClinicField(clinic.id, 'name', (e.target as HTMLInputElement).value)}
+                        oninput={(e) => updateClinicField(clinic.localId, 'name', (e.target as HTMLInputElement).value)}
                       />
                     </div>
 
                     <div class="clinic-field clinic-field-wide">
-                      <label for="clinic-address-{clinic.id}">العنوان</label>
+                      <label for="clinic-address-{clinic.localId}">العنوان</label>
                       <input
-                        id="clinic-address-{clinic.id}"
+                        id="clinic-address-{clinic.localId}"
                         type="text"
                         placeholder="المحافظة، الحي، اسم الشارع"
                         value={clinic.address}
-                        oninput={(e) => updateClinicField(clinic.id, 'address', (e.target as HTMLInputElement).value)}
+                        oninput={(e) => updateClinicField(clinic.localId, 'address', (e.target as HTMLInputElement).value)}
                       />
                     </div>
 
                     <div class="clinic-field">
-                      <label for="clinic-phone-{clinic.id}">رقم التليفون</label>
+                      <label for="clinic-phone-{clinic.localId}">رقم التليفون</label>
                       <input
-                        id="clinic-phone-{clinic.id}"
+                        id="clinic-phone-{clinic.localId}"
                         type="tel"
                         placeholder="01x xxxx xxxx"
                         value={clinic.phone}
-                        oninput={(e) => updateClinicField(clinic.id, 'phone', (e.target as HTMLInputElement).value)}
+                        oninput={(e) => updateClinicField(clinic.localId, 'phone', (e.target as HTMLInputElement).value)}
                       />
                     </div>
 
                     <div class="clinic-field">
-                      <label for="clinic-fee-{clinic.id}">سعر الكشف (ج.م)</label>
+                      <label for="clinic-fee-{clinic.localId}">سعر الكشف (ج.م)</label>
                       <div class="clinic-fee-wrap">
                         <input
-                          id="clinic-fee-{clinic.id}"
+                          id="clinic-fee-{clinic.localId}"
                           type="number"
                           min="0"
                           step="50"
                           value={clinic.consultFee}
-                          oninput={(e) => updateClinicField(clinic.id, 'consultFee', Number((e.target as HTMLInputElement).value))}
+                          oninput={(e) => updateClinicField(clinic.localId, 'consultFee', Number((e.target as HTMLInputElement).value))}
                         />
                         <span>ج.م</span>
                       </div>
@@ -1278,7 +1543,7 @@ import { goto } from '$app/navigation';
                     </h4>
 
                     <div class="clinic-days-list">
-                      {#each clinic.days as day (day.key)}
+                      {#each clinic.days as day (day.dayOfWeek)}
                         <div class="clinic-day-row" class:is-off={day.isOff}>
 
                           <!-- day toggle + label -->
@@ -1289,7 +1554,7 @@ import { goto } from '$app/navigation';
                               role="switch"
                               aria-checked={!day.isOff}
                               aria-label={`تفعيل يوم ${day.label}`}
-                              onclick={() => toggleClinicDay(clinic.id, day.key)}
+                              onclick={() => toggleClinicDay(clinic.localId, day.dayOfWeek)}
                             >
                               <span class="switch-thumb"></span>
                             </button>
@@ -1308,7 +1573,7 @@ import { goto } from '$app/navigation';
                                     <input
                                       type="time"
                                       value={slot.from}
-                                      onchange={(e) => updateSlot(clinic.id, day.key, slot.id, 'from', (e.target as HTMLInputElement).value)}
+                                      onchange={(e) => updateSlot(clinic.localId, day.dayOfWeek, slot.id, 'from', (e.target as HTMLInputElement).value)}
                                     />
                                     <small>{formatTime(slot.from)}</small>
                                   </label>
@@ -1317,14 +1582,14 @@ import { goto } from '$app/navigation';
                                     <input
                                       type="time"
                                       value={slot.to}
-                                      onchange={(e) => updateSlot(clinic.id, day.key, slot.id, 'to', (e.target as HTMLInputElement).value)}
+                                      onchange={(e) => updateSlot(clinic.localId, day.dayOfWeek, slot.id, 'to', (e.target as HTMLInputElement).value)}
                                     />
                                     <small>{formatTime(slot.to)}</small>
                                   </label>
                                   {#if day.slots.length > 1}
                                     <button
                                       class="slot-remove-btn"
-                                      onclick={() => removeSlot(clinic.id, day.key, slot.id)}
+                                      onclick={() => removeSlot(clinic.localId, day.dayOfWeek, slot.id)}
                                       aria-label="حذف هذا الميعاد"
                                     >
                                       <X size={13} />
@@ -1335,7 +1600,7 @@ import { goto } from '$app/navigation';
 
                               <button
                                 class="slot-add-btn"
-                                onclick={() => addSlot(clinic.id, day.key)}
+                                onclick={() => addSlot(clinic.localId, day.dayOfWeek)}
                                 aria-label="إضافة فترة أخرى"
                               >
                                 <Plus size={13} />
@@ -1370,6 +1635,11 @@ import { goto } from '$app/navigation';
         <span class="saved-hint">
           <CheckCircle2 size={16} />
           تم حفظ الإعدادات بنجاح
+        </span>
+      {:else if saveError}
+        <span class="saved-hint save-error-hint">
+          <AlertCircle size={16} />
+          {saveError}
         </span>
       {/if}
 
@@ -3727,5 +3997,34 @@ import { goto } from '$app/navigation';
     .clinic-card-head { flex-wrap: wrap; }
     .clinic-day-row   { flex-direction: column; }
     .clinic-slot      { flex-direction: column; align-items: flex-start; }
+  }
+
+  /* ---- unsaved badge & row error (new) ---- */
+  .clinic-unsaved-badge {
+    display: inline-flex;
+    align-items: center;
+    font-size: .68rem;
+    font-weight: 600;
+    color: #b45309;
+    background: #fef3c7;
+    border: 1px solid #fde68a;
+    border-radius: 99px;
+    padding: 1px 8px;
+    margin-right: 6px;
+  }
+
+  .clinic-row-error {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: .8rem;
+    color: #dc2626;
+    background: #fef2f2;
+    border-top: 1px solid #fecaca;
+    padding: 6px 16px;
+  }
+
+  .save-error-hint {
+    color: #dc2626 !important;
   }
 </style>
