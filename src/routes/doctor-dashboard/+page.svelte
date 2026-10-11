@@ -339,6 +339,7 @@ import { goto } from '$app/navigation';
       arr.push(s);
       byDay.set(s.day_of_week, arr);
     }
+    const hhmm = (t?: string) => (t && /^\d{2}:\d{2}/.test(t) ? t.slice(0, 5) : '');
 
     return DAY_META.map((d) => {
       const rows = byDay.get(d.dayOfWeek) ?? [];
@@ -347,8 +348,8 @@ import { goto } from '$app/navigation';
       const slots: ClinicSlot[] = isOff
         ? []
         : rows
-            .filter((r) => !r.is_off && r.from_time && r.to_time)
-            .map((r) => ({ id: ++slotIdCounter, from: r.from_time!, to: r.to_time! }));
+            .filter((r) => !r.is_off && hhmm(r.from_time) && hhmm(r.to_time))
+            .map((r) => ({ id: ++slotIdCounter, from: hhmm(r.from_time), to: hhmm(r.to_time) }))
       return { dayOfWeek: d.dayOfWeek, label: d.label, isOff, slots };
     });
   }
