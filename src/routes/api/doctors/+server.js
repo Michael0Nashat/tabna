@@ -3,6 +3,8 @@ import { json } from '@sveltejs/kit';
 
 const DEFAULT_API_BASE = 'https://goserverapi.vercel.app';
 
+// Removed duplicate GET handlers for conversations which belong to a different route.
+
 // Text fields accepted by the Go API (see server.go -> CreateDoctor).
 const TEXT_FIELDS = [
 	'full_name',
