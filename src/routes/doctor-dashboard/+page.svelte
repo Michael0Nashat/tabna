@@ -1,12 +1,12 @@
 <script lang="ts">
-import { goto } from '$app/navigation';
+  import { goto } from '$app/navigation';
   import { page } from '$app/state';
+  import { tick, untrack } from 'svelte';
   import {
     Stethoscope,
     Star,
     ShieldCheck,
     CheckCircle2,
-    Clock3,
     Users,
     MessageCircle,
     Phone,
@@ -16,18 +16,13 @@ import { goto } from '$app/navigation';
     ArrowLeft,
     Save,
     X,
-    TrendingUp,
     Bell,
-    Coffee,
     BadgeCheck,
     ChevronDown,
     ChevronUp,
     AlertCircle,
     Send,
     Paperclip,
-    MoreVertical,
-    PhoneCall,
-    VideoIcon,
     ClockIcon,
     UserRound,
     Inbox,
@@ -85,7 +80,6 @@ import { goto } from '$app/navigation';
     return {
       id: row.id,
       name,
-      // Composed from real API fields instead of a hardcoded marketing line.
       tagline: `${degree} — ${specialty}`,
       degree,
       specialty,
@@ -103,10 +97,8 @@ import { goto } from '$app/navigation';
   let loadingDoctors = $state(true);
   let doctorsError = $state('');
 
-  // Login hands over the resolved doctor via /doctor-dashboard?id=<uuid> (see
-  // submitLogin in src/routes/+page.svelte). Without it the dashboard still
-  // opens, falling back to the first row, so the route keeps working when it is
-  // visited directly.
+  // Login hands over the resolved doctor via /doctor-dashboard?id=<uuid>.
+  // Without it the dashboard falls back to the first row.
   const activeDoctorId = $derived(page.url.searchParams.get('id') ?? '');
 
   const doctor = $derived(
@@ -147,9 +139,8 @@ import { goto } from '$app/navigation';
 
   // ---------------- Profile picture ----------------
 
-  // The list endpoint omits profile_image (see GetDoctors in server.go), so the
-  // picture is fetched per doctor from GET /doctors/:id and cached per id so
-  // switching back and forth doesn't refetch the base64 payload.
+  // The list endpoint omits profile_image, so the picture is fetched per doctor
+  // from GET /doctors/:id.
   let avatarFailed = $state(false);
 
   const avatarSrc = $derived(doctor?.profileImage && !avatarFailed ? doctor.profileImage : '');
@@ -167,13 +158,12 @@ import { goto } from '$app/navigation';
         if (!res.ok) return;
 
         const data = await res.json();
-        const img = typeof data?.profile_image === 'string' ? data.profile_image : '';
+        const img = typeof data?.doctor?.profile_image === 'string' ? data.doctor.profile_image : '';
         if (cancelled) return;
 
         doctors = doctors.map((d) => (d.id === id ? { ...d, profileImage: img } : d));
       } catch {
-        // A missing picture is not a page-level failure: the avatar falls back
-        // to the doctor's initial.
+        // A missing picture is not a page-level failure.
       }
     })();
 
@@ -188,13 +178,9 @@ import { goto } from '$app/navigation';
 
   // ---------------- Online status ----------------
 
-  // Seeded from the real API value once the doctor row loads; kept in local
-  // state so the toggle is instant (optimistic). The PATCH call syncs the
-  // change to the backend and rolls back on failure.
   let isOnline = $state(false);
   let togglingOnline = $state(false);
 
-  // Sync isOnline whenever the resolved doctor changes (e.g. after loadDoctors).
   $effect(() => {
     if (doctor) isOnline = doctor.isOnline;
   });
@@ -204,7 +190,7 @@ import { goto } from '$app/navigation';
 
     const next = !isOnline;
 
-    // Optimistic update — feels instant to the user.
+    // Optimistic update.
     isOnline = next;
     togglingOnline = true;
 
@@ -219,15 +205,10 @@ import { goto } from '$app/navigation';
 
       const data = await res.json();
 
-      // Keep local state in sync with what the server confirmed.
       isOnline = typeof data.is_online === 'boolean' ? data.is_online : next;
 
-      // Also update the cached doctor list so switching doctors stays correct.
-      doctors = doctors.map((d) =>
-        d.id === doctor!.id ? { ...d, isOnline } : d
-      );
+      doctors = doctors.map((d) => (d.id === doctor!.id ? { ...d, isOnline } : d));
     } catch {
-      // Roll back the optimistic update on any failure.
       isOnline = !next;
     } finally {
       togglingOnline = false;
@@ -254,14 +235,13 @@ import { goto } from '$app/navigation';
 
   const WORK_PLACES_API = '/api/work-places';
 
-  // API shape returned by GET /work-places
   interface ApiSchedule {
     id: number;
     work_place_id: string;
-    day_of_week: number;   // 0=السبت … 6=الجمعة
+    day_of_week: number; // 0=السبت … 6=الجمعة
     day_name: string;
     is_off: boolean;
-    from_time?: string;    // "HH:MM"
+    from_time?: string; // "HH:MM"
     to_time?: string;
   }
 
@@ -276,11 +256,10 @@ import { goto } from '$app/navigation';
     schedules?: ApiSchedule[];
   }
 
-  // Local UI types
   type PlaceType = 'عيادة خاصة' | 'مستشفى' | 'مركز طبي' | 'مستوصف';
 
   interface ClinicSlot {
-    id: number;   // local-only counter for keying, not sent to API
+    id: number; // local-only counter for keying, not sent to API
     from: string; // "HH:MM"
     to: string;
   }
@@ -293,9 +272,7 @@ import { goto } from '$app/navigation';
   }
 
   interface Clinic {
-    // API-assigned UUID once saved; empty string for new (unsaved) rows
-    apiId: string;
-    // Stable local key for Svelte {#each} tracking before the row has an apiId
+    apiId: string; // empty for new (unsaved) rows
     localId: number;
     type: PlaceType;
     name: string;
@@ -303,24 +280,20 @@ import { goto } from '$app/navigation';
     phone: string;
     consultFee: number;
     days: ClinicDay[];
-    // true while a save/delete request is in flight for this specific row
     saving: boolean;
-    // non-empty when the last save for this row failed
     saveError: string;
   }
 
-  // Day-of-week definitions: 0=السبت … 6=الجمعة (matches the Go API)
   const DAY_META: { dayOfWeek: number; label: string }[] = [
-    { dayOfWeek: 0, label: 'السبت'    },
-    { dayOfWeek: 1, label: 'الأحد'    },
-    { dayOfWeek: 2, label: 'الاثنين'  },
+    { dayOfWeek: 0, label: 'السبت' },
+    { dayOfWeek: 1, label: 'الأحد' },
+    { dayOfWeek: 2, label: 'الاثنين' },
     { dayOfWeek: 3, label: 'الثلاثاء' },
     { dayOfWeek: 4, label: 'الأربعاء' },
-    { dayOfWeek: 5, label: 'الخميس'  },
-    { dayOfWeek: 6, label: 'الجمعة'  },
+    { dayOfWeek: 5, label: 'الخميس' },
+    { dayOfWeek: 6, label: 'الجمعة' }
   ];
 
-  // Build blank days (all off) for a brand-new clinic
   function blankDays(): ClinicDay[] {
     return DAY_META.map((d) => ({
       dayOfWeek: d.dayOfWeek,
@@ -330,9 +303,7 @@ import { goto } from '$app/navigation';
     }));
   }
 
-  // Convert API schedule rows → local ClinicDay[]
   function schedulesToDays(schedules: ApiSchedule[]): ClinicDay[] {
-    // Group by day_of_week
     const byDay = new Map<number, ApiSchedule[]>();
     for (const s of schedules) {
       const arr = byDay.get(s.day_of_week) ?? [];
@@ -343,18 +314,16 @@ import { goto } from '$app/navigation';
 
     return DAY_META.map((d) => {
       const rows = byDay.get(d.dayOfWeek) ?? [];
-      // A day is off when it has no rows OR all rows have is_off = true
       const isOff = rows.length === 0 || rows.every((r) => r.is_off);
       const slots: ClinicSlot[] = isOff
         ? []
         : rows
             .filter((r) => !r.is_off && hhmm(r.from_time) && hhmm(r.to_time))
-            .map((r) => ({ id: ++slotIdCounter, from: hhmm(r.from_time), to: hhmm(r.to_time) }))
+            .map((r) => ({ id: ++slotIdCounter, from: hhmm(r.from_time), to: hhmm(r.to_time) }));
       return { dayOfWeek: d.dayOfWeek, label: d.label, isOff, slots };
     });
   }
 
-  // Convert local ClinicDay[] → API schedule input array
   function daysToSchedules(days: ClinicDay[]) {
     const out: { day_of_week: number; is_off: boolean; from_time?: string; to_time?: string }[] = [];
     for (const day of days) {
@@ -363,7 +332,6 @@ import { goto } from '$app/navigation';
       } else {
         const validSlots = day.slots.filter((slot) => {
           if (!slot.from || !slot.to) return false;
-          // Normalize to zero-padded HH:MM before comparing to handle non-padded API values
           const pad = (t: string) => t.split(':').map((p) => p.padStart(2, '0')).join(':');
           return pad(slot.from) < pad(slot.to);
         });
@@ -379,65 +347,63 @@ import { goto } from '$app/navigation';
     return out;
   }
 
-  // Map API place_type string → local UI PlaceType
   function toLocalType(apiType: string): PlaceType {
     const map: Record<string, PlaceType> = {
       'عيادة خاصة': 'عيادة خاصة',
-      'مستشفى':     'مستشفى',
-      'مركز طبي':   'مركز طبي',
-      'مستوصف':     'مستوصف',
+      'مستشفى': 'مستشفى',
+      'مركز طبي': 'مركز طبي',
+      'مستوصف': 'مستوصف'
     };
     return map[apiType] ?? 'عيادة خاصة';
   }
 
-  // Map local PlaceType → API place_type string (same values, kept for clarity)
-  function toApiType(t: PlaceType): string { return t; }
+  function toApiType(t: PlaceType): string {
+    return t;
+  }
 
   function apiToClinic(wp: ApiWorkPlace, localId: number): Clinic {
     return {
-      apiId:      wp.id,
+      apiId: wp.id,
       localId,
-      type:       toLocalType(wp.place_type),
-      name:       wp.name,
-      address:    wp.address,
-      phone:      wp.phone ?? '',
+      type: toLocalType(wp.place_type),
+      name: wp.name,
+      address: wp.address,
+      phone: wp.phone ?? '',
       consultFee: wp.exam_price ?? 0,
-      days:       schedulesToDays(wp.schedules ?? []),
-      saving:     false,
-      saveError:  '',
+      days: schedulesToDays(wp.schedules ?? []),
+      saving: false,
+      saveError: ''
     };
   }
 
-  let clinics          = $state<Clinic[]>([]);
-  let clinicsLoading   = $state(false);
-  let clinicsError     = $state('');
-  let slotIdCounter    = 0;
-  let localIdCounter   = $state(1);
+  let clinics = $state<Clinic[]>([]);
+  let clinicsLoading = $state(false);
+  let clinicsError = $state('');
+  let slotIdCounter = 0;
+  let localIdCounter = $state(1);
 
-  // expanded / collapsed per localId
   let expandedClinicIds = $state<number[]>([]);
 
-  // Load work places from the API whenever the resolved doctor changes
+  // Load work places whenever the resolved doctor changes
   $effect(() => {
     const id = doctor?.id;
     if (!id) return;
 
     clinicsLoading = true;
-    clinicsError   = '';
+    clinicsError = '';
 
     (async () => {
       try {
-        const res  = await fetch(`${WORK_PLACES_API}?doctor_id=${encodeURIComponent(id)}`);
+        const res = await fetch(`${WORK_PLACES_API}?doctor_id=${encodeURIComponent(id)}`);
         const data = await res.json();
 
         if (!res.ok) throw new Error(data?.error ?? `فشل تحميل أماكن العمل (${res.status})`);
 
         const rows: ApiWorkPlace[] = Array.isArray(data?.work_places) ? data.work_places : [];
-        let counter = localIdCounter;
+        let counter = untrack(() => localIdCounter);
         clinics = rows.map((wp) => apiToClinic(wp, counter++));
         localIdCounter = counter;
 
-        // auto-expand the first clinic for convenience
         if (clinics.length > 0) expandedClinicIds = [clinics[0].localId];
       } catch (err) {
         clinicsError = err instanceof Error ? err.message : 'تعذّر تحميل أماكن العمل';
@@ -453,52 +419,48 @@ import { goto } from '$app/navigation';
       : [...expandedClinicIds, localId];
   }
 
-  // Add a blank unsaved clinic row locally (saved on "حفظ الإعدادات")
   function addClinic() {
     const localId = ++localIdCounter;
     clinics = [
       ...clinics,
       {
-        apiId:      '',
+        apiId: '',
         localId,
-        type:       'عيادة خاصة',
-        name:       '',
-        address:    '',
-        phone:      '',
+        type: 'عيادة خاصة',
+        name: '',
+        address: '',
+        phone: '',
         consultFee: 0,
-        days:       blankDays(),
-        saving:     false,
-        saveError:  '',
+        days: blankDays(),
+        saving: false,
+        saveError: ''
       }
     ];
     expandedClinicIds = [...expandedClinicIds, localId];
   }
 
-  // Delete from API if saved, then remove locally
   async function removeClinic(localId: number) {
     const clinic = clinics.find((c) => c.localId === localId);
     if (!clinic) return;
 
-    // Not yet saved → just drop it locally
     if (!clinic.apiId) {
       clinics = clinics.filter((c) => c.localId !== localId);
       expandedClinicIds = expandedClinicIds.filter((x) => x !== localId);
       return;
     }
 
-    // Mark as saving to disable the button
-    clinics = clinics.map((c) => c.localId === localId ? { ...c, saving: true, saveError: '' } : c);
+    clinics = clinics.map((c) => (c.localId === localId ? { ...c, saving: true, saveError: '' } : c));
 
     try {
-      const res  = await fetch(`${WORK_PLACES_API}/${clinic.apiId}`, { method: 'DELETE' });
+      const res = await fetch(`${WORK_PLACES_API}/${clinic.apiId}`, { method: 'DELETE' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error ?? `فشل الحذف (${res.status})`);
 
-      clinics           = clinics.filter((c) => c.localId !== localId);
+      clinics = clinics.filter((c) => c.localId !== localId);
       expandedClinicIds = expandedClinicIds.filter((x) => x !== localId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'تعذّر حذف المكان';
-      clinics = clinics.map((c) => c.localId === localId ? { ...c, saving: false, saveError: msg } : c);
+      clinics = clinics.map((c) => (c.localId === localId ? { ...c, saving: false, saveError: msg } : c));
     }
   }
 
@@ -515,13 +477,10 @@ import { goto } from '$app/navigation';
           if (d.dayOfWeek !== dayOfWeek) return d;
           const nowOff = !d.isOff;
           if (nowOff) {
-            // Going off → keep slots in memory so they restore if toggled back on
             return { ...d, isOff: true };
           } else {
-            // Going on → restore previous slots if any, otherwise add a default slot
-            const restored = d.slots.length > 0
-              ? d.slots
-              : [{ id: ++slotIdCounter, from: '09:00', to: '17:00' }];
+            const restored =
+              d.slots.length > 0 ? d.slots : [{ id: ++slotIdCounter, from: '09:00', to: '17:00' }];
             return { ...d, isOff: false, slots: restored };
           }
         })
@@ -569,56 +528,56 @@ import { goto } from '$app/navigation';
   async function saveClinic(clinic: Clinic): Promise<ClinicDay[]> {
     if (!doctor?.id) throw new Error('لم يتم تحديد الطبيب');
 
-    // Always read the latest state — the passed `clinic` may be a stale snapshot
     const latest = clinics.find((c) => c.localId === clinic.localId) ?? clinic;
 
     const body = {
-      doctor_id:  doctor.id,
+      doctor_id: doctor.id,
       place_type: toApiType(latest.type),
-      name:       latest.name.trim(),
-      address:    latest.address.trim(),
-      phone:      latest.phone.trim(),
-      exam_price: latest.consultFee || null,
+      name: latest.name.trim(),
+      address: latest.address.trim(),
+      phone: latest.phone.trim(),
+      exam_price: latest.consultFee || null
     };
 
     let apiId = latest.apiId;
 
     if (!apiId) {
-      // Create
-      const res  = await fetch(WORK_PLACES_API, {
-        method:  'POST',
+      const res = await fetch(WORK_PLACES_API, {
+        method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body:    JSON.stringify(body),
+        body: JSON.stringify(body)
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? `فشل الإنشاء (${res.status})`);
       apiId = (data?.work_place as ApiWorkPlace)?.id ?? '';
       if (!apiId) throw new Error('لم يُرجع السيرفر معرّف المكان');
-      // Persist the new apiId immediately so Delete works if Save fails below
-      clinics = clinics.map((c) => c.localId === latest.localId ? { ...c, apiId } : c);
+      clinics = clinics.map((c) => (c.localId === latest.localId ? { ...c, apiId } : c));
     } else {
-      // Update
-      const res  = await fetch(`${WORK_PLACES_API}/${apiId}`, {
-        method:  'PUT',
+      const res = await fetch(`${WORK_PLACES_API}/${apiId}`, {
+        method: 'PUT',
         headers: { 'content-type': 'application/json' },
-        body:    JSON.stringify({ place_type: body.place_type, name: body.name, address: body.address, phone: body.phone, exam_price: body.exam_price }),
+        body: JSON.stringify({
+          place_type: body.place_type,
+          name: body.name,
+          address: body.address,
+          phone: body.phone,
+          exam_price: body.exam_price
+        })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? `فشل التحديث (${res.status})`);
     }
 
-    // Re-read latest days right before building the payload (user may have edited after loop started)
     const currentDays = (clinics.find((c) => c.localId === latest.localId) ?? latest).days;
     const schedPayload = { schedules: daysToSchedules(currentDays) };
     const schedRes = await fetch(`${WORK_PLACES_API}/${apiId}/schedules`, {
-      method:  'POST',
+      method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body:    JSON.stringify(schedPayload),
+      body: JSON.stringify(schedPayload)
     });
     const schedData = await schedRes.json();
     if (!schedRes.ok) throw new Error(schedData?.error ?? `فشل حفظ المواعيد (${schedRes.status})`);
 
-    // Return updated days from server response so UI stays in sync
     return schedulesToDays((schedData?.schedules as ApiSchedule[]) ?? []);
   }
 
@@ -661,144 +620,344 @@ import { goto } from '$app/navigation';
     notifications = notifications.filter((n) => n.id !== id);
   }
 
-  // ---------------- Patients list ----------------
+  // ---------------- Chat (live from the Go API) ----------------
 
-  type PatientStatus = 'waiting' | 'active' | 'done' | 'scheduled';
+  const CONVERSATIONS_API = '/api/conversations';
+  const PATIENTS_API = '/api/patients';
+  const MAX_CHAT_IMAGE = 5 * 1024 * 1024; // same as MaxImageSize in server.go
 
-  interface ChatMessage {
-    id: number;
-    from: 'doctor' | 'patient';
-    text: string;
-    time: string;
+  // The WebSocket lives at /ws/chat (outside /api) — see the Vite proxy rule.
+  function chatSocketUrl(): string {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    return `${proto}://${location.host}/ws/chat`;
   }
 
-  interface Patient {
+  interface ApiConversation {
+    id: string;
+    patient_id: number;
+    doctor_id: string;
+    created_at: string;
+    updated_at: string;
+  }
+
+  interface ApiMessage {
     id: number;
+    conversation_id: string;
+    sender_type: 'patient' | 'doctor';
+    sender_id: string;
+    message?: string;
+    image_data?: string; // data URL
+    created_at: string;
+  }
+
+  interface ChatPatient {
+    conversationId: string;
+    patientId: number;
     name: string;
     initials: string;
-    age: number;
-    complaint: string;
-    status: PatientStatus;
-    consultType: 'chat' | 'audio' | 'video';
-    waitSince: string;
-    messages: ChatMessage[];
+    phone: string;
+    updatedAt: string;
+    unread: boolean;
   }
 
-  let patients = $state<Patient[]>([
-    {
-      id: 1,
-      name: 'سارة أحمد علي',
-      initials: 'سأ',
-      age: 28,
-      complaint: 'آلام أسفل البطن منذ يومين',
-      status: 'waiting',
-      consultType: 'chat',
-      waitSince: 'منذ 5 دقائق',
-      messages: [
-        { id: 1, from: 'patient', text: 'السلام عليكم دكتور، أعاني من آلام حادة في أسفل البطن منذ يومين ولا أعرف سببها', time: '04:52 م' },
-        { id: 2, from: 'patient', text: 'الألم يزداد بالليل وعندي إفرازات غير طبيعية', time: '04:53 م' }
-      ]
-    },
-    {
-      id: 2,
-      name: 'منى محمود حسن',
-      initials: 'مم',
-      age: 34,
-      complaint: 'متابعة ما بعد الولادة',
-      status: 'active',
-      consultType: 'video',
-      waitSince: 'منذ 18 دقيقة',
-      messages: [
-        { id: 1, from: 'patient', text: 'دكتور أنا ولدت منذ 3 أسابيع وعندي بعض الأسئلة عن الرضاعة', time: '04:30 م' },
-        { id: 2, from: 'doctor', text: 'أهلاً منى، تفضلي اسأليني وأنا في خدمتك', time: '04:31 م' },
-        { id: 3, from: 'patient', text: 'الطفل لا يرضع بشكل كافٍ وأنا قلقة جداً، هل هذا طبيعي؟', time: '04:33 م' },
-        { id: 4, from: 'doctor', text: 'هذا وارد في الأسابيع الأولى. كمية الرضاعة ستزيد تدريجياً مع الوقت. تأكدي أن وضعية الإمساك صحيحة ورضعي كل 2-3 ساعات', time: '04:35 م' }
-      ]
-    },
-    {
-      id: 3,
-      name: 'هنا كريم سعيد',
-      initials: 'هك',
-      age: 22,
-      complaint: 'تأخر الدورة الشهرية',
-      status: 'waiting',
-      consultType: 'chat',
-      waitSince: 'منذ 12 دقيقة',
-      messages: [
-        { id: 1, from: 'patient', text: 'دكتور دورتي تأخرت 3 أسابيع وعمل تحليل حمل طلع سلبي، ما السبب؟', time: '04:46 م' }
-      ]
-    },
-    {
-      id: 4,
-      name: 'ريم عبدالله فاروق',
-      initials: 'رع',
-      age: 31,
-      complaint: 'استشارة ما قبل الحمل',
-      status: 'done',
-      consultType: 'audio',
-      waitSince: 'منذ ساعة',
-      messages: [
-        { id: 1, from: 'patient', text: 'دكتور أنا أخطط للحمل وأريد نصائح قبل البدء', time: '03:00 م' },
-        { id: 2, from: 'doctor', text: 'أهلاً بك، ننصح بأخذ حمض الفوليك قبل الحمل بـ 3 أشهر، وعمل تحاليل شاملة', time: '03:02 م' },
-        { id: 3, from: 'patient', text: 'شكراً جزيلاً دكتور، سأتبع نصائحك', time: '03:15 م' },
-        { id: 4, from: 'doctor', text: 'بالتوفيق إن شاء الله، لا تترددي في التواصل', time: '03:16 م' }
-      ]
-    },
-    {
-      id: 5,
-      name: 'دينا يوسف ناصر',
-      initials: 'دي',
-      age: 26,
-      complaint: 'آلام أثناء الدورة',
-      status: 'scheduled',
-      consultType: 'chat',
-      waitSince: 'غداً 7:00 م',
-      messages: []
-    }
-  ]);
+  let chatPatients = $state<ChatPatient[]>([]);
+  let chatsLoading = $state(false);
+  let chatsError = $state('');
 
-  // patients filter + شات state
-  let patientsFilter = $state<'all' | PatientStatus>('all');
-  let activeChatPatient = $state<Patient | null>(null);
+  let activeChat = $state<ChatPatient | null>(null);
+  let chatMessages = $state<ApiMessage[]>([]);
+  let chatMessagesLoading = $state(false);
   let chatInput = $state('');
+  let chatSending = $state(false);
+  let chatConnected = $state(false);
+  let chatErr = $state('');
   let chatBodyEl = $state<HTMLElement | null>(null);
+  let fileInputEl = $state<HTMLInputElement | null>(null);
 
-  function openChat(patient: Patient) {
-    activeChatPatient = patient;
+  let ws: WebSocket | null = null;
+  const patientCache = new Map<number, { username: string; phone: string }>();
+  // conversationId -> updated_at the doctor has already seen ('sync' = take next value)
+  const lastSeen = new Map<string, string>();
+
+  function initialsOf(name: string): string {
+    return (
+      name
+        .trim()
+        .split(/\s+/)
+        .slice(0, 2)
+        .map((w) => w.charAt(0))
+        .join('') || '؟'
+    );
+  }
+
+  function formatMsgTime(iso: string): string {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit', numberingSystem: 'latn' });
+  }
+
+  function formatActivity(iso: string): string {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleString('ar-EG', { dateStyle: 'short', timeStyle: 'short' });
+  }
+
+  async function getPatient(id: number) {
+    const cached = patientCache.get(id);
+    if (cached) return cached;
+    try {
+      const res = await fetch(`${PATIENTS_API}/${id}`);
+      const data = await res.json();
+      const info = {
+        username: text(data?.patient?.username, `مريض #${id}`),
+        phone: text(data?.patient?.phone, '—')
+      };
+      if (res.ok) patientCache.set(id, info);
+      return info;
+    } catch {
+      return { username: `مريض #${id}`, phone: '—' };
+    }
+  }
+
+  async function loadConversations(silent = false) {
+    const doctorId = doctor?.id;
+    if (!doctorId) return;
+
+    if (!silent) {
+      chatsLoading = true;
+      chatsError = '';
+    }
+
+    try {
+      const res = await fetch(`${CONVERSATIONS_API}?doctor_id=${encodeURIComponent(doctorId)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(text(data?.error, `فشل تحميل المحادثات (${res.status})`));
+
+      const rows: ApiConversation[] = Array.isArray(data?.conversations) ? data.conversations : [];
+
+      chatPatients = await Promise.all(
+        rows.map(async (c) => {
+          const p = await getPatient(c.patient_id);
+
+          const isOpen = activeChat?.conversationId === c.id;
+          if (isOpen || !lastSeen.has(c.id) || lastSeen.get(c.id) === 'sync') {
+            lastSeen.set(c.id, c.updated_at);
+          }
+          const unread = Date.parse(c.updated_at) > Date.parse(lastSeen.get(c.id)!);
+
+          return {
+            conversationId: c.id,
+            patientId: c.patient_id,
+            name: p.username,
+            initials: initialsOf(p.username),
+            phone: p.phone,
+            updatedAt: c.updated_at,
+            unread
+          };
+        })
+      );
+    } catch (err) {
+      if (!silent) chatsError = err instanceof Error ? err.message : 'تعذّر تحميل المحادثات';
+    } finally {
+      if (!silent) chatsLoading = false;
+    }
+  }
+
+  // Load conversations when the doctor is known, then refresh every 8s.
+  $effect(() => {
+    const id = doctor?.id;
+    if (!id) return;
+
+    untrack(() => loadConversations());
+    const timer = setInterval(() => untrack(() => loadConversations(true)), 8000);
+    return () => clearInterval(timer);
+  });
+
+  async function scrollChatToBottom() {
+    await tick();
+    if (chatBodyEl) chatBodyEl.scrollTop = chatBodyEl.scrollHeight;
+  }
+
+  function appendMessage(m: ApiMessage) {
+    if (!activeChat || m.conversation_id !== activeChat.conversationId) return;
+    if (chatMessages.some((x) => x.id === m.id)) return; // REST + WS can both deliver it
+    chatMessages = [...chatMessages, m];
+    scrollChatToBottom();
+  }
+
+  function closeSocket() {
+    if (ws) {
+      const s = ws;
+      ws = null;
+      s.onclose = null;
+      s.close();
+    }
+    chatConnected = false;
+  }
+
+  function connectSocket(conversationId: string) {
+    const doctorId = doctor?.id;
+    if (!doctorId) return;
+
+    const socket = new WebSocket(chatSocketUrl());
+    ws = socket;
+
+    socket.onmessage = (ev) => {
+      let evt: { type: string; message?: ApiMessage; error?: string };
+      try {
+        evt = JSON.parse(ev.data);
+      } catch {
+        return;
+      }
+
+      if (evt.type === 'connected') {
+        socket.send(
+          JSON.stringify({
+            type: 'subscribe',
+            conversation_id: conversationId,
+            sender_type: 'doctor',
+            sender_id: doctorId
+          })
+        );
+      } else if (evt.type === 'subscribed') {
+        chatConnected = true;
+      } else if (evt.type === 'message.created' && evt.message) {
+        appendMessage(evt.message);
+      } else if (evt.type === 'error') {
+        chatErr = evt.error ?? 'خطأ في المحادثة';
+      }
+    };
+
+    socket.onclose = () => {
+      if (ws === socket) {
+        ws = null;
+        chatConnected = false;
+      }
+    };
+  }
+
+  async function openChat(patient: ChatPatient) {
+    closeSocket();
+
+    activeChat = patient;
+    chatMessages = [];
     chatInput = '';
-    // scroll to bottom after render
-    setTimeout(() => {
-      if (chatBodyEl) chatBodyEl.scrollTop = chatBodyEl.scrollHeight;
-    }, 50);
+    chatErr = '';
+    chatMessagesLoading = true;
+
+    lastSeen.set(patient.conversationId, patient.updatedAt);
+    chatPatients = chatPatients.map((p) =>
+      p.conversationId === patient.conversationId ? { ...p, unread: false } : p
+    );
+
+    try {
+      const res = await fetch(`${CONVERSATIONS_API}/${patient.conversationId}/messages`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(text(data?.error, `فشل تحميل الرسائل (${res.status})`));
+
+      if (activeChat?.conversationId !== patient.conversationId) return; // user switched chat
+      chatMessages = Array.isArray(data?.messages) ? data.messages : [];
+    } catch (err) {
+      chatErr = err instanceof Error ? err.message : 'تعذّر تحميل الرسائل';
+    } finally {
+      chatMessagesLoading = false;
+    }
+
+    if (activeChat?.conversationId === patient.conversationId) {
+      scrollChatToBottom();
+      connectSocket(patient.conversationId);
+    }
   }
 
   function closeChat() {
-    activeChatPatient = null;
+    if (activeChat) lastSeen.set(activeChat.conversationId, 'sync');
+    closeSocket();
+    activeChat = null;
+    chatMessages = [];
+    loadConversations(true);
   }
 
-  function sendMessage() {
-    const text = chatInput.trim();
-    if (!text || !activeChatPatient) return;
+  // Close the socket when the page is destroyed.
+  $effect(() => () => closeSocket());
 
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit', numberingSystem: 'latn' });
+  async function sendMessage() {
+    const body = chatInput.trim();
+    if (!body || !activeChat || !doctor || chatSending) return;
+    chatErr = '';
 
-    // push into the patient's messages array
-    patients = patients.map((p) => {
-      if (p.id !== activeChatPatient!.id) return p;
-      return {
-        ...p,
-        messages: [...p.messages, { id: Date.now(), from: 'doctor', text, time: timeStr }]
-      };
-    });
+    // Preferred path: WebSocket (server saves it and broadcasts message.created back).
+    if (ws && chatConnected && ws.readyState === WebSocket.OPEN) {
+      ws.send(
+        JSON.stringify({
+          type: 'message',
+          conversation_id: activeChat.conversationId,
+          sender_type: 'doctor',
+          sender_id: doctor.id,
+          message: body
+        })
+      );
+      chatInput = '';
+      return;
+    }
 
-    // keep activeChatPatient in sync
-    activeChatPatient = patients.find((p) => p.id === activeChatPatient!.id) ?? null;
-    chatInput = '';
+    // Fallback: REST.
+    chatSending = true;
+    try {
+      const res = await fetch(`${CONVERSATIONS_API}/${activeChat.conversationId}/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sender_type: 'doctor', sender_id: doctor.id, message: body })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(text(data?.error, `فشل الإرسال (${res.status})`));
+      chatInput = '';
+      if (data?.message) appendMessage(data.message as ApiMessage);
+    } catch (err) {
+      chatErr = err instanceof Error ? err.message : 'تعذّر إرسال الرسالة';
+    } finally {
+      chatSending = false;
+    }
+  }
 
-    setTimeout(() => {
-      if (chatBodyEl) chatBodyEl.scrollTop = chatBodyEl.scrollHeight;
-    }, 30);
+  async function handleFilePicked(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file || !activeChat || !doctor) return;
+
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      chatErr = 'مسموح فقط بصور JPG أو PNG أو WEBP';
+      return;
+    }
+    if (file.size > MAX_CHAT_IMAGE) {
+      chatErr = 'حجم الصورة يجب ألا يتجاوز 5 ميجابايت';
+      return;
+    }
+
+    chatErr = '';
+    chatSending = true;
+    try {
+      const fd = new FormData();
+      fd.append('sender_type', 'doctor');
+      fd.append('sender_id', doctor.id);
+      fd.append('message', chatInput.trim());
+      fd.append('image', file);
+
+      // No content-type header: the browser sets the multipart boundary.
+      const res = await fetch(`${CONVERSATIONS_API}/${activeChat.conversationId}/messages/image`, {
+        method: 'POST',
+        body: fd
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(text(data?.error, `فشل إرسال الصورة (${res.status})`));
+
+      chatInput = '';
+      if (data?.message) appendMessage(data.message as ApiMessage);
+    } catch (err) {
+      chatErr = err instanceof Error ? err.message : 'تعذّر إرسال الصورة';
+    } finally {
+      chatSending = false;
+    }
   }
 
   function handleChatKey(e: KeyboardEvent) {
@@ -808,21 +967,8 @@ import { goto } from '$app/navigation';
     }
   }
 
-  const statusLabel: Record<PatientStatus, string> = {
-    waiting: 'في الانتظار',
-    active: 'جارية',
-    done: 'مكتملة',
-    scheduled: 'مجدولة'
-  };
-
-  const consultTypeIcon: Record<Patient['consultType'], string> = {
-    chat: 'MessageCircle',
-    audio: 'Phone',
-    video: 'Video'
-  };
-
   // ----------------------------------------------------------------
-  // Save all clinics + reload on success
+  // Save all clinics
 
   let saving = $state(false);
   let savedJustNow = $state(false);
@@ -830,10 +976,9 @@ import { goto } from '$app/navigation';
 
   async function saveSettings() {
     if (saving || !doctor?.id) return;
-    saving    = true;
+    saving = true;
     saveError = '';
 
-    // Clear per-row errors
     clinics = clinics.map((c) => ({ ...c, saveError: '' }));
 
     let anyFailed = false;
@@ -841,15 +986,12 @@ import { goto } from '$app/navigation';
     for (const clinic of clinics) {
       if (!clinic.name.trim() || !clinic.address.trim()) {
         clinics = clinics.map((c) =>
-          c.localId === clinic.localId
-            ? { ...c, saveError: 'اسم المكان والعنوان مطلوبان' }
-            : c
+          c.localId === clinic.localId ? { ...c, saveError: 'اسم المكان والعنوان مطلوبان' } : c
         );
         anyFailed = true;
         continue;
       }
 
-      // Validate slot times before sending to the API
       const invalidDays = clinic.days.filter((d) => {
         if (d.isOff) return false;
         const pad = (t: string) => t.split(':').map((p) => p.padStart(2, '0')).join(':');
@@ -858,22 +1000,22 @@ import { goto } from '$app/navigation';
       if (invalidDays.length > 0) {
         const names = invalidDays.map((d) => d.label).join('، ');
         clinics = clinics.map((c) =>
-          c.localId === clinic.localId
-            ? { ...c, saveError: `يرجى تصحيح أوقات الكشف في: ${names}` }
-            : c
+          c.localId === clinic.localId ? { ...c, saveError: `يرجى تصحيح أوقات الكشف في: ${names}` } : c
         );
         anyFailed = true;
         continue;
       }
 
-      clinics = clinics.map((c) => c.localId === clinic.localId ? { ...c, saving: true } : c);
+      clinics = clinics.map((c) => (c.localId === clinic.localId ? { ...c, saving: true } : c));
 
       try {
         const updatedDays = await saveClinic(clinic);
-        clinics = clinics.map((c) => c.localId === clinic.localId ? { ...c, saving: false, saveError: '', days: updatedDays } : c);
+        clinics = clinics.map((c) =>
+          c.localId === clinic.localId ? { ...c, saving: false, saveError: '', days: updatedDays } : c
+        );
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'تعذّر الحفظ';
-        clinics   = clinics.map((c) => c.localId === clinic.localId ? { ...c, saving: false, saveError: msg } : c);
+        clinics = clinics.map((c) => (c.localId === clinic.localId ? { ...c, saving: false, saveError: msg } : c));
         anyFailed = true;
       }
     }
@@ -892,9 +1034,9 @@ import { goto } from '$app/navigation';
   async function cancelChanges() {
     if (!doctor?.id || saving) return;
     clinicsLoading = true;
-    clinicsError   = '';
+    clinicsError = '';
     try {
-      const res  = await fetch(`${WORK_PLACES_API}?doctor_id=${encodeURIComponent(doctor.id)}`);
+      const res = await fetch(`${WORK_PLACES_API}?doctor_id=${encodeURIComponent(doctor.id)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? `فشل التحميل (${res.status})`);
       const rows: ApiWorkPlace[] = Array.isArray(data?.work_places) ? data.work_places : [];
@@ -938,9 +1080,9 @@ import { goto } from '$app/navigation';
       </a>
 
       <a href="/" class="back-link" onclick={(e) => { e.preventDefault(); goto('/'); }}>
-  <ArrowLeft size={16} class="flip-rtl" />
-  رجوع للرئيسية
-</a>
+        <ArrowLeft size={16} class="flip-rtl" />
+        رجوع للرئيسية
+      </a>
 
     </div>
   </header>
@@ -1160,8 +1302,7 @@ import { goto } from '$app/navigation';
     </section>
 
 
-
-    <!-- ===== PATIENTS LIST ===== -->
+    <!-- ===== PATIENTS / CONVERSATIONS ===== -->
     <section class="panel patients-panel">
 
       <div class="panel-header">
@@ -1170,68 +1311,50 @@ import { goto } from '$app/navigation';
         </div>
         <div>
           <h3>قائمة المرضى</h3>
-          <p>استعرض مرضى اليوم، افتح المحادثة أو تابع الحالة</p>
+          <p>المحادثات الحقيقية مع المرضى — افتح الشات للرد</p>
         </div>
       </div>
 
-      <!-- filter tabs -->
-      <div class="patients-tabs" role="tablist">
-        {#each (['all','waiting','active','done','scheduled'] as const) as key}
-          <button
-            role="tab"
-            class="ptab"
-            class:active={patientsFilter === key}
-            onclick={() => (patientsFilter = key)}
-          >
-            {key === 'all' ? 'الكل' : statusLabel[key as PatientStatus]}
-            <span class="ptab-count">
-              {key === 'all' ? patients.length : patients.filter(p => p.status === key).length}
-            </span>
-          </button>
-        {/each}
-      </div>
+      {#if chatsLoading}
+        <div class="clinics-empty">
+          <div class="spinner" aria-hidden="true"></div>
+          <p>جارٍ تحميل المحادثات…</p>
+        </div>
+      {:else if chatsError}
+        <div class="clinics-empty">
+          <AlertCircle size={28} />
+          <p>{chatsError}</p>
+          <button class="add-clinic-btn" onclick={() => loadConversations()}>إعادة المحاولة</button>
+        </div>
+      {:else if chatPatients.length === 0}
+        <div class="patients-empty">
+          <UserRound size={32} />
+          <span>لا توجد محادثات مع مرضى بعد</span>
+        </div>
+      {:else}
+        <ul class="patients-list">
+          {#each chatPatients as patient (patient.conversationId)}
+            <li class="patient-row" class:status-waiting={patient.unread}>
 
-      <!-- table -->
-      <ul class="patients-list">
-        {#each patients.filter(p => patientsFilter === 'all' || p.status === patientsFilter) as patient (patient.id)}
-          <li class="patient-row status-{patient.status}">
+              <div class="patient-avatar" aria-hidden="true">{patient.initials}</div>
 
-            <!-- avatar -->
-            <div class="patient-avatar" aria-hidden="true">{patient.initials}</div>
-
-            <!-- info -->
-            <div class="patient-info">
-              <div class="patient-name-row">
-                <strong>{patient.name}</strong>
-                <span class="patient-age">{patient.age} سنة</span>
-              </div>
-              <p class="patient-complaint">{patient.complaint}</p>
-              <div class="patient-meta">
-                <span class="consult-type-badge consult-{patient.consultType}">
-                  {#if patient.consultType === 'chat'}
-                    <MessageCircle size={12} />
-                  {:else if patient.consultType === 'audio'}
+              <div class="patient-info">
+                <div class="patient-name-row">
+                  <strong>{patient.name}</strong>
+                </div>
+                <div class="patient-meta">
+                  <span class="patient-wait">
                     <Phone size={12} />
-                  {:else}
-                    <Video size={12} />
-                  {/if}
-                  {patient.consultType === 'chat' ? 'شات' : patient.consultType === 'audio' ? 'صوتي' : 'فيديو'}
-                </span>
-                <span class="patient-wait">
-                  <ClockIcon size={12} />
-                  {patient.waitSince}
-                </span>
+                    {patient.phone}
+                  </span>
+                  <span class="patient-wait">
+                    <ClockIcon size={12} />
+                    آخر نشاط: {formatActivity(patient.updatedAt)}
+                  </span>
+                </div>
               </div>
-            </div>
 
-            <!-- status pill -->
-            <span class="status-pill status-pill-{patient.status}">
-              {statusLabel[patient.status]}
-            </span>
-
-            <!-- actions -->
-            <div class="patient-actions">
-              {#if patient.status !== 'done'}
+              <div class="patient-actions">
                 <button
                   class="chat-open-btn"
                   onclick={() => openChat(patient)}
@@ -1239,31 +1362,16 @@ import { goto } from '$app/navigation';
                 >
                   <MessageCircle size={16} />
                   فتح الشات
-                  {#if patient.messages.filter(m => m.from === 'patient').length > 0 && patient.status === 'waiting'}
+                  {#if patient.unread}
                     <span class="chat-unread-dot"></span>
                   {/if}
                 </button>
-              {:else}
-                <button
-                  class="chat-view-btn"
-                  onclick={() => openChat(patient)}
-                  aria-label="عرض محادثة {patient.name}"
-                >
-                  عرض السجل
-                </button>
-              {/if}
-            </div>
+              </div>
 
-          </li>
-        {/each}
-
-        {#if patients.filter(p => patientsFilter === 'all' || p.status === patientsFilter).length === 0}
-          <li class="patients-empty">
-            <UserRound size={32} />
-            <span>لا يوجد مرضى في هذا القسم</span>
-          </li>
-        {/if}
-      </ul>
+            </li>
+          {/each}
+        </ul>
+      {/if}
 
     </section>
 
@@ -1322,9 +1430,6 @@ import { goto } from '$app/navigation';
       </div>
 
     </section>
-
-
-
 
 
     <!-- ===== CLINICS / HOSPITALS ===== -->
@@ -1507,7 +1612,6 @@ import { goto } from '$app/navigation';
                       {#each clinic.days as day (day.dayOfWeek)}
                         <div class="clinic-day-row" class:is-off={day.isOff}>
 
-                          <!-- day toggle + label -->
                           <div class="clinic-day-label">
                             <button
                               class="switch small"
@@ -1522,7 +1626,6 @@ import { goto } from '$app/navigation';
                             <strong>{day.label}</strong>
                           </div>
 
-                          <!-- slots or off tag -->
                           {#if day.isOff}
                             <span class="schedule-off-tag">يوم عطلة / غير متاح</span>
                           {:else}
@@ -1590,8 +1693,6 @@ import { goto } from '$app/navigation';
     </section>
 
 
-
-
     <!-- Footer actions -->
     <div class="page-actions">
 
@@ -1628,8 +1729,7 @@ import { goto } from '$app/navigation';
 </div>
 
 <!-- ===== CHAT OVERLAY ===== -->
-{#if activeChatPatient}
-  <!-- backdrop -->
+{#if activeChat}
   <div
     class="chat-backdrop"
     role="button"
@@ -1639,114 +1739,111 @@ import { goto } from '$app/navigation';
     onkeydown={(e) => e.key === 'Escape' && closeChat()}
   ></div>
 
-  <div class="chat-window" role="dialog" aria-modal="true" aria-label="محادثة مع {activeChatPatient.name}">
+  <div class="chat-window" role="dialog" aria-modal="true" aria-label="محادثة مع {activeChat.name}">
 
-    <!-- chat header -->
     <div class="chat-header">
-
       <div class="chat-header-avatar" aria-hidden="true">
-        {activeChatPatient.initials}
-        <span class="chat-avatar-dot" class:online-dot={activeChatPatient.status === 'active'}></span>
+        {activeChat.initials}
+        <span class="chat-avatar-dot" class:online-dot={chatConnected}></span>
       </div>
 
       <div class="chat-header-info">
-        <strong>{activeChatPatient.name}</strong>
-        <span>
-          {activeChatPatient.age} سنة
-          <span class="dot">•</span>
-          {activeChatPatient.complaint}
-        </span>
+        <strong>{activeChat.name}</strong>
+        <span>{activeChat.phone}</span>
       </div>
 
       <div class="chat-header-actions">
-        {#if activeChatPatient.consultType === 'audio' || activeChatPatient.consultType === 'video'}
-          <button class="chat-icon-btn" aria-label="مكالمة صوتية">
-            <PhoneCall size={17} />
-          </button>
-        {/if}
-        {#if activeChatPatient.consultType === 'video'}
-          <button class="chat-icon-btn" aria-label="مكالمة فيديو">
-            <VideoIcon size={17} />
-          </button>
-        {/if}
-        <button class="chat-icon-btn" aria-label="خيارات أخرى">
-          <MoreVertical size={17} />
-        </button>
         <button class="chat-close-btn" onclick={closeChat} aria-label="إغلاق">
           <X size={19} />
         </button>
       </div>
-
     </div>
 
-    <!-- status banner -->
-    <div class="chat-status-bar status-bar-{activeChatPatient.status}">
-      <span class="status-pill status-pill-{activeChatPatient.status}">
-        {statusLabel[activeChatPatient.status]}
-      </span>
-      <span class="chat-wait-label">
-        <ClockIcon size={13} />
-        {activeChatPatient.waitSince}
+    <div class="chat-status-bar">
+      <span class="status-pill" class:status-pill-active={chatConnected} class:status-pill-waiting={!chatConnected}>
+        {chatConnected ? 'متصل مباشر' : 'جارٍ الاتصال…'}
       </span>
     </div>
 
-    <!-- messages body -->
     <div class="chat-body" bind:this={chatBodyEl}>
-
-      {#if activeChatPatient.messages.length === 0}
+      {#if chatMessagesLoading}
+        <div class="chat-empty">
+          <div class="spinner" aria-hidden="true"></div>
+          <p>جارٍ تحميل الرسائل…</p>
+        </div>
+      {:else if chatMessages.length === 0}
         <div class="chat-empty">
           <MessageCircle size={36} />
-          <p>لا توجد رسائل بعد.<br/>ابدأ المحادثة مع المريض.</p>
+          <p>لا توجد رسائل بعد.<br />ابدأ المحادثة مع المريض.</p>
         </div>
       {:else}
         <div class="chat-messages">
-          {#each activeChatPatient.messages as msg (msg.id)}
-            <div class="msg-wrap" class:msg-doctor={msg.from === 'doctor'} class:msg-patient={msg.from === 'patient'}>
-              {#if msg.from === 'patient'}
-                <div class="msg-avatar-sm" aria-hidden="true">{activeChatPatient.initials}</div>
+          {#each chatMessages as msg (msg.id)}
+            <div
+              class="msg-wrap"
+              class:msg-doctor={msg.sender_type === 'doctor'}
+              class:msg-patient={msg.sender_type === 'patient'}
+            >
+              {#if msg.sender_type === 'patient'}
+                <div class="msg-avatar-sm" aria-hidden="true">{activeChat.initials}</div>
               {:else}
                 <div class="msg-avatar-sm msg-avatar-doctor" aria-hidden="true">د</div>
               {/if}
               <div class="msg-bubble">
-                <p>{msg.text}</p>
-                <time>{msg.time}</time>
+                {#if msg.image_data}
+                  <img class="msg-img" src={msg.image_data} alt="صورة مرفقة" />
+                {/if}
+                {#if msg.message}
+                  <p>{msg.message}</p>
+                {/if}
+                <time>{formatMsgTime(msg.created_at)}</time>
               </div>
             </div>
           {/each}
         </div>
       {/if}
-
     </div>
 
-    <!-- input bar -->
-    {#if activeChatPatient.status !== 'done'}
-      <div class="chat-input-bar">
-        <button class="chat-attach-btn" aria-label="إرفاق ملف">
-          <Paperclip size={18} />
-        </button>
-        <textarea
-          class="chat-textarea"
-          placeholder="اكتب ردك هنا... (Enter للإرسال)"
-          rows="1"
-          bind:value={chatInput}
-          onkeydown={handleChatKey}
-        ></textarea>
-        <button
-          class="chat-send-btn"
-          class:ready={chatInput.trim().length > 0}
-          onclick={sendMessage}
-          aria-label="إرسال"
-          disabled={chatInput.trim().length === 0}
-        >
-          <Send size={18} />
-        </button>
-      </div>
-    {:else}
-      <div class="chat-done-bar">
-        <CheckCircle2 size={16} />
-        الاستشارة مكتملة — للاطلاع فقط
+    {#if chatErr}
+      <div class="chat-err">
+        <AlertCircle size={14} />
+        {chatErr}
       </div>
     {/if}
+
+    <div class="chat-input-bar">
+      <input
+        bind:this={fileInputEl}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        class="chat-file-input"
+        onchange={handleFilePicked}
+      />
+      <button
+        class="chat-attach-btn"
+        aria-label="إرفاق صورة"
+        disabled={chatSending}
+        onclick={() => fileInputEl?.click()}
+      >
+        <Paperclip size={18} />
+      </button>
+      <textarea
+        class="chat-textarea"
+        placeholder="اكتب ردك هنا... (Enter للإرسال)"
+        rows="1"
+        bind:value={chatInput}
+        onkeydown={handleChatKey}
+      ></textarea>
+      <button
+        class="chat-send-btn"
+        class:ready={chatInput.trim().length > 0}
+        onclick={sendMessage}
+        aria-label="إرسال"
+        disabled={chatInput.trim().length === 0 || chatSending}
+      >
+        <Send size={18} />
+      </button>
+    </div>
 
   </div>
 {/if}
@@ -2428,99 +2525,6 @@ import { goto } from '$app/navigation';
     }
   }
 
-  /* ---------------- Rules ---------------- */
-  .rules-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 18px;
-  }
-
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-  }
-
-  .field span {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--ink);
-  }
-
-  .field input,
-  .field select {
-    font-family: var(--font-body);
-    font-size: 0.95rem;
-    color: var(--ink);
-    background: var(--paper-deep);
-    border: 1.5px solid var(--line);
-    border-radius: 12px;
-    padding: 12px 16px;
-    transition: border-color 0.15s ease;
-  }
-
-  .field input:focus,
-  .field select:focus {
-    border-color: var(--pine-light);
-    outline: none;
-  }
-
-  @media (max-width: 560px) {
-    .rules-grid {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  .booking-types {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    padding-top: 18px;
-    border-top: 1px dashed var(--line);
-  }
-
-  .booking-types-label {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--ink);
-  }
-
-  .checkbox-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 0.9rem;
-    color: var(--ink-soft);
-    cursor: pointer;
-  }
-
-  .checkbox-row input {
-    position: absolute;
-    opacity: 0;
-    width: 0;
-    height: 0;
-  }
-
-  .checkbox-box {
-    width: 22px;
-    height: 22px;
-    border-radius: 7px;
-    border: 1.5px solid var(--line);
-    background: var(--white);
-    color: transparent;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-  }
-
-  .checkbox-row input:checked + .checkbox-box {
-    background: var(--pine);
-    border-color: var(--pine);
-    color: var(--paper);
-  }
-
   /* ---------------- Page actions ---------------- */
   .page-actions {
     display: flex;
@@ -2611,11 +2615,10 @@ import { goto } from '$app/navigation';
     flex-shrink: 0;
   }
 
-  /* ── stat cards ── */
-  .stat-card-icon.revenue  { background: var(--success-mist); color: var(--success-deep); }
-  .stat-card-icon.waiting  { background: var(--warning-mist); color: var(--warning); }
-  .stat-card-icon.completed{ background: var(--pine-mist); color: var(--pine); }
-  .stat-card-icon.reviews  { background: var(--gold-mist); color: var(--gold); }
+  .stat-card-icon.revenue   { background: var(--success-mist); color: var(--success-deep); }
+  .stat-card-icon.waiting   { background: var(--warning-mist); color: var(--warning); }
+  .stat-card-icon.completed { background: var(--pine-mist); color: var(--pine); }
+  .stat-card-icon.reviews   { background: var(--gold-mist); color: var(--gold); }
 
   .stat-card-label {
     display: block;
@@ -2669,7 +2672,6 @@ import { goto } from '$app/navigation';
     font-size: 0.85rem;
   }
 
-  /* ── notification badge ── */
   .notif-badge {
     display: inline-flex;
     align-items: center;
@@ -2745,10 +2747,9 @@ import { goto } from '$app/navigation';
     flex-shrink: 0;
   }
 
-  /* ── notification type icons ── */
-  .notif-type-icon.instant   { background: var(--danger-mist);  color: var(--danger); }
-  .notif-type-icon.scheduled { background: var(--pine-mist);    color: var(--pine); }
-  .notif-type-icon.review    { background: var(--gold-mist);    color: var(--gold); }
+  .notif-type-icon.instant   { background: var(--danger-mist); color: var(--danger); }
+  .notif-type-icon.scheduled { background: var(--pine-mist);   color: var(--pine); }
+  .notif-type-icon.review    { background: var(--gold-mist);   color: var(--gold); }
 
   .notif-text {
     flex: 1;
@@ -2780,136 +2781,12 @@ import { goto } from '$app/navigation';
   }
 
   /* ============================================================
-     PROFILE COMPLETION
-  ============================================================ */
-  .completion-bar-wrap {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-  }
-
-  .completion-bar {
-    flex: 1;
-    height: 10px;
-    border-radius: 999px;
-    background: var(--paper-deep);
-    overflow: hidden;
-  }
-
-  /* ── completion bar gradient ── */
-  .completion-fill {
-    height: 100%;
-    border-radius: 999px;
-    background: var(--grad-progress);
-    transition: width 0.5s ease;
-  }
-
-  .completion-pct {
-    font-size: 0.88rem;
-    font-weight: 700;
-    color: var(--pine);
-    min-width: 38px;
-    text-align: left;
-  }
-
-  .completion-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 0.84rem;
-    font-weight: 600;
-    color: var(--pine-light);
-    text-decoration: underline;
-    align-self: flex-start;
-  }
-
-  .completion-steps {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding-top: 4px;
-    border-top: 1px dashed var(--line);
-  }
-
-  .completion-step {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 0.88rem;
-    color: var(--ink-soft);
-  }
-
-  .completion-step.done {
-    color: var(--success);
-  }
-
-  .step-icon {
-    display: flex;
-    flex-shrink: 0;
-  }
-
-  /* ============================================================
      PATIENTS LIST
   ============================================================ */
   .patients-panel {
     gap: 20px;
   }
 
-  /* --- filter tabs --- */
-  .patients-tabs {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    padding-bottom: 4px;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .ptab {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.84rem;
-    font-weight: 600;
-    color: var(--ink-soft);
-    padding: 7px 14px;
-    border-radius: 999px;
-    border: 1.5px solid transparent;
-    transition: background-color 0.15s, color 0.15s, border-color 0.15s;
-  }
-
-  .ptab:hover {
-    background: var(--paper-deep);
-    color: var(--ink);
-  }
-
-  .ptab.active {
-    background: var(--pine);
-    color: var(--paper);
-    border-color: var(--pine);
-  }
-
-  .ptab-count {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 18px;
-    height: 18px;
-    padding: 0 5px;
-    border-radius: 999px;
-    background: rgba(255,255,255,0.25);
-    font-size: 0.72rem;
-    font-weight: 700;
-  }
-
-  .ptab:not(.active) .ptab-count {
-    background: var(--paper-deep);
-    color: var(--ink-soft);
-  }
-
-  /* --- patients rows --- */
   .patients-list {
     list-style: none;
     padding: 0;
@@ -2936,11 +2813,7 @@ import { goto } from '$app/navigation';
     box-shadow: 0 4px 16px -8px rgba(22,56,50,0.15);
   }
 
-  /* ── patient row border colors ── */
-  .patient-row.status-waiting   { border-right: 4px solid var(--status-waiting-color); }
-  .patient-row.status-active    { border-right: 4px solid var(--status-active-color); }
-  .patient-row.status-done      { border-right: 4px solid var(--line); opacity: 0.75; }
-  .patient-row.status-scheduled { border-right: 4px solid var(--status-scheduled-color); }
+  .patient-row.status-waiting { border-right: 4px solid var(--status-waiting-color); }
 
   .patient-avatar {
     width: 48px;
@@ -2977,44 +2850,13 @@ import { goto } from '$app/navigation';
     color: var(--ink);
   }
 
-  .patient-age {
-    font-size: 0.78rem;
-    color: var(--ink-soft);
-    background: var(--paper-deep);
-    padding: 2px 8px;
-    border-radius: 999px;
-  }
-
-  .patient-complaint {
-    font-size: 0.84rem;
-    color: var(--ink-soft);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 280px;
-  }
-
   .patient-meta {
     display: flex;
     align-items: center;
     gap: 10px;
     margin-top: 2px;
+    flex-wrap: wrap;
   }
-
-  .consult-type-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    padding: 3px 9px;
-    border-radius: 999px;
-  }
-
-  /* ── consult type badges ── */
-  .consult-chat      { background: var(--chat-mist);  color: var(--chat-color); }
-  .consult-audio     { background: var(--audio-mist); color: var(--audio-color); }
-  .consult-video     { background: var(--video-mist); color: var(--video-color); }
 
   .patient-wait {
     display: inline-flex;
@@ -3024,7 +2866,6 @@ import { goto } from '$app/navigation';
     color: var(--ink-soft);
   }
 
-  /* --- status pills --- */
   .status-pill {
     display: inline-flex;
     align-items: center;
@@ -3037,13 +2878,11 @@ import { goto } from '$app/navigation';
     flex-shrink: 0;
   }
 
-  /* ── status pills ── */
   .status-pill-waiting   { background: var(--status-waiting-mist);   color: var(--status-waiting-color); }
   .status-pill-active    { background: var(--status-active-mist);    color: var(--status-active-color); }
   .status-pill-done      { background: var(--status-done-mist);      color: var(--status-done-color); }
   .status-pill-scheduled { background: var(--status-scheduled-mist); color: var(--status-scheduled-color); }
 
-  /* --- patient action buttons --- */
   .patient-actions {
     flex-shrink: 0;
   }
@@ -3080,21 +2919,6 @@ import { goto } from '$app/navigation';
     border: 2px solid var(--white);
   }
 
-  .chat-view-btn {
-    font-size: 0.83rem;
-    font-weight: 600;
-    color: var(--ink-soft);
-    border: 1.5px solid var(--line);
-    padding: 8px 16px;
-    border-radius: 999px;
-    transition: background-color 0.15s;
-  }
-
-  .chat-view-btn:hover {
-    background: var(--paper-deep);
-    color: var(--ink);
-  }
-
   .patients-empty {
     display: flex;
     flex-direction: column;
@@ -3108,7 +2932,7 @@ import { goto } from '$app/navigation';
   @media (max-width: 600px) {
     .patient-row { flex-direction: column; align-items: flex-start; }
     .patient-actions { align-self: stretch; }
-    .chat-open-btn, .chat-view-btn { width: 100%; justify-content: center; }
+    .chat-open-btn { width: 100%; justify-content: center; }
   }
 
   /* ============================================================
@@ -3138,21 +2962,20 @@ import { goto } from '$app/navigation';
     flex-direction: column;
     overflow: hidden;
     direction: ltr;
+    font-family: var(--font-body);
   }
 
-  /* everything inside goes back to RTL */
   .chat-window > * {
     direction: rtl;
   }
 
-  /* --- chat header --- */
   .chat-header {
     display: flex;
     align-items: center;
     gap: 12px;
     padding: 14px 16px;
-    background: #5d544e;   /* apricot-mist */
-    color: black;        /* pine */
+    background: #5d544e;
+    color: black;
     flex-shrink: 0;
   }
 
@@ -3222,40 +3045,23 @@ import { goto } from '$app/navigation';
     flex-shrink: 0;
   }
 
-  .chat-icon-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--pine);                 /* was: rgba(231,224,209,0.7) */
-  transition: background-color 0.15s, color 0.15s;
-}
-
-.chat-icon-btn:hover {
-  background: var(--apricot-mist);    /* was: rgba(255,255,255,0.14) */
-  color: var(--apricot-deep);         /* was: var(--paper) */
-}
-
   .chat-close-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--pine);                 /* was: rgba(231,224,209,0.7) */
-  transition: background-color 0.15s, color 0.15s;
-  margin-inline-start: 2px;
-}
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--paper);
+    transition: background-color 0.15s, color 0.15s;
+    margin-inline-start: 2px;
+  }
 
-.chat-close-btn:hover {
-  background: var(--apricot-mist);    /* was: rgba(255,80,60,0.25) */
-  color: var(--apricot-deep);         /* was: #fca5a5 */
-}
+  .chat-close-btn:hover {
+    background: var(--apricot-mist);
+    color: var(--apricot-deep);
+  }
 
-  /* --- status bar --- */
   .chat-status-bar {
     display: flex;
     align-items: center;
@@ -3266,16 +3072,6 @@ import { goto } from '$app/navigation';
     flex-shrink: 0;
   }
 
-  .chat-wait-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 0.74rem;
-    color: var(--ink-soft);
-    margin-inline-start: auto;
-  }
-
-  /* --- messages body --- */
   .chat-body {
     flex: 1;
     overflow-y: auto;
@@ -3284,11 +3080,9 @@ import { goto } from '$app/navigation';
     flex-direction: column;
     scroll-behavior: smooth;
     background: #eef1f0;
-    /* restore RTL for message content */
     direction: rtl;
   }
 
-  /* custom scrollbar */
   .chat-body::-webkit-scrollbar { width: 4px; }
   .chat-body::-webkit-scrollbar-track { background: transparent; }
   .chat-body::-webkit-scrollbar-thumb { background: var(--line); border-radius: 99px; }
@@ -3319,22 +3113,19 @@ import { goto } from '$app/navigation';
     gap: 10px;
   }
 
-  /* each message row */
   .msg-wrap {
     display: flex;
     align-items: flex-end;
     gap: 7px;
   }
 
-  /* patient messages — appear on the RIGHT in RTL */
   .msg-patient {
-    flex-direction: row;          /* avatar → bubble, RTL renders right-to-left */
-    justify-content: flex-start;  /* flex-start = visual right in RTL */
+    flex-direction: row;
+    justify-content: flex-start;
   }
 
-  /* doctor messages — appear on the LEFT in RTL */
   .msg-doctor {
-    flex-direction: row-reverse;  /* flips to left side in RTL */
+    flex-direction: row-reverse;
     justify-content: flex-start;
   }
 
@@ -3354,7 +3145,6 @@ import { goto } from '$app/navigation';
     border: 1.5px solid #b8d8d0;
   }
 
-  /* ── doctor msg avatar ── */
   .msg-avatar-doctor {
     background: var(--grad-pine);
     color: var(--paper);
@@ -3376,7 +3166,6 @@ import { goto } from '$app/navigation';
     word-break: break-word;
   }
 
-  /* patient bubble — white card with subtle shadow */
   .msg-patient .msg-bubble p {
     background: #ffffff;
     color: var(--ink);
@@ -3385,7 +3174,6 @@ import { goto } from '$app/navigation';
     box-shadow: 0 1px 4px rgba(22,56,50,0.08);
   }
 
-  /* ── doctor bubble ── */
   .msg-doctor .msg-bubble p {
     background: #1a5c50;
     color: #e8f5f2;
@@ -3402,27 +3190,31 @@ import { goto } from '$app/navigation';
   }
 
   .msg-patient .msg-bubble time { text-align: right; color: var(--ink-muted); }
-  .msg-doctor  .msg-bubble time { text-align: left;  color: rgba(200,235,228,0.75); }
+  .msg-doctor  .msg-bubble time { text-align: left;  color: var(--ink-muted); }
 
-  /* date separator */
-  .msg-date-sep {
-    text-align: center;
-    font-size: 0.72rem;
-    color: var(--ink-soft);
-    margin: 8px 0 4px;
+  .msg-img {
+    max-width: 100%;
+    max-height: 240px;
+    border-radius: 12px;
+    object-fit: cover;
+    display: block;
+    border: 1px solid var(--line);
+  }
+
+  .chat-err {
     display: flex;
     align-items: center;
-    gap: 8px;
-  }
-  .msg-date-sep::before,
-  .msg-date-sep::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: var(--line);
+    gap: 6px;
+    font-size: 0.8rem;
+    color: #dc2626;
+    background: #fef2f2;
+    border-top: 1px solid #fecaca;
+    padding: 6px 14px;
+    flex-shrink: 0;
   }
 
-  /* --- input bar --- */
+  .chat-file-input { display: none; }
+
   .chat-input-bar {
     display: flex;
     align-items: flex-end;
@@ -3450,6 +3242,8 @@ import { goto } from '$app/navigation';
     background: var(--paper-deep);
     color: var(--pine);
   }
+
+  .chat-attach-btn:disabled { cursor: not-allowed; opacity: 0.5; }
 
   .chat-textarea {
     flex: 1;
@@ -3504,22 +3298,6 @@ import { goto } from '$app/navigation';
 
   .chat-send-btn:disabled { cursor: not-allowed; opacity: 0.5; }
 
-  /* --- done bar --- */
-  .chat-done-bar {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 13px;
-    border-top: 1px solid var(--line);
-    background: var(--paper-deep);
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: var(--ink-soft);
-    flex-shrink: 0;
-    direction: rtl;
-  }
-
   @media (max-width: 520px) {
     .chat-window {
       inset-inline-end: 0;
@@ -3561,7 +3339,6 @@ import { goto } from '$app/navigation';
     transform: translateY(-1px);
   }
 
-  /* empty state */
   .clinics-empty {
     display: flex;
     flex-direction: column;
@@ -3581,14 +3358,12 @@ import { goto } from '$app/navigation';
     color: var(--ink-soft);
   }
 
-  /* list of clinic cards */
   .clinics-list {
     display: flex;
     flex-direction: column;
     gap: 14px;
   }
 
-  /* ── single clinic card ── */
   .clinic-card {
     border: 1.5px solid var(--line);
     border-radius: 18px;
@@ -3601,7 +3376,6 @@ import { goto } from '$app/navigation';
     box-shadow: 0 4px 20px -8px rgba(22, 56, 50, 0.15);
   }
 
-  /* card header row */
   .clinic-card-head {
     display: flex;
     align-items: center;
@@ -3695,7 +3469,6 @@ import { goto } from '$app/navigation';
     color: var(--danger);
   }
 
-  /* expandable body */
   .clinic-body {
     padding: 20px;
     border-top: 1px dashed var(--line);
@@ -3705,7 +3478,6 @@ import { goto } from '$app/navigation';
     background: var(--white);
   }
 
-  /* basic info fields grid */
   .clinic-fields {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -3803,7 +3575,6 @@ import { goto } from '$app/navigation';
     flex-shrink: 0;
   }
 
-  /* clinic weekly schedule */
   .clinic-schedule {
     display: flex;
     flex-direction: column;
@@ -3867,7 +3638,6 @@ import { goto } from '$app/navigation';
     color: var(--ink);
   }
 
-  /* slots column */
   .clinic-slots {
     flex: 1;
     display: flex;
@@ -3954,13 +3724,17 @@ import { goto } from '$app/navigation';
     color: var(--pine);
   }
 
+  .slot-error-msg {
+    font-size: 0.75rem;
+    color: var(--danger);
+  }
+
   @media (max-width: 580px) {
     .clinic-card-head { flex-wrap: wrap; }
     .clinic-day-row   { flex-direction: column; }
     .clinic-slot      { flex-direction: column; align-items: flex-start; }
   }
 
-  /* ---- unsaved badge & row error (new) ---- */
   .clinic-unsaved-badge {
     display: inline-flex;
     align-items: center;
