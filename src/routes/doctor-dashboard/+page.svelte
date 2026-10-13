@@ -1,5 +1,6 @@
 <script lang="ts">
 import { goto } from '$app/navigation';
+import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/chat.js';
   import { page } from '$app/state';
   import {
     Stethoscope,
@@ -661,6 +662,192 @@ import { goto } from '$app/navigation';
     notifications = notifications.filter((n) => n.id !== id);
   }
 
+  // ---------------- Live chat with patients (Go API + /ws/chat) ----------
+  //
+  // The mock `patients` list above is demo data only; the real patient
+  // conversations live in the Go backend. When this dashboard belongs to a
+  // doctor we know the id of (logged in via /doctor-dashboard?id=<uuid>), we
+  // mirror the open chat through the REST proxy for history and through the
+  // live WebSocket for real-time delivery. See $lib/chat.js.
+  const CONVERSATIONS_API = '/api/conversations';
+  const PATIENTS_API = '/api/patients';
+
+  interface ApiConversation {
+    id: string;
+    patient_id: number;
+    doctor_id: string;
+    created_at: string;
+    updated_at: string;
+  }
+
+  interface ApiPatient {
+    id: number;
+    username: string;
+    phone: string;
+    created_at: string;
+  }
+
+  let apiConversations = $state<ApiConversation[]>([]);
+  let apiPatients = $state<Record<number, ApiPatient>>({});
+  let liveMessages = $state<import('$lib/chat.js').ChatMessage[]>([]);
+  let liveConvId = $state('');
+  let liveSending = $state(false);
+  let liveChatSession = $state<ReturnType<typeof openChatSocket> | null>(null);
+
+  /** True when we know this doctor's API id (came in via ?id=). */
+  const isLiveDoctor = $derived(doctor?.id !== undefined && doctor?.id !== '');
+
+  async function loadLiveChatFor(doctorId: string) {
+    apiConversations = [];
+    apiPatients = {};
+    liveMessages = [];
+    liveConvId = '';
+
+    if (!doctorId) return;
+
+    try {
+      const res = await fetch(`${CONVERSATIONS_API}?doctor_id=${encodeURIComponent(doctorId)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      apiConversations = Array.isArray(data?.conversations) ? data.conversations : [];
+    } catch {
+      return; // not fatal: mock list still works
+    }
+
+    // Pull the patient rows so we can show real names next to each thread.
+    const ids = [...new Set(apiConversations.map((c) => c.patient_id))];
+    if (ids.length > 0) {
+      const res = await fetch(PATIENTS_API).catch(() => null);
+      if (res && res.ok) {
+        const data = await res.json();
+        const rows: ApiPatient[] = Array.isArray(data?.patients) ? data.patients : [];
+        for (const row of rows) apiPatients[row.id] = row;
+      }
+    }
+  }
+
+  function openLiveChat(conversation: ApiConversation) {
+    closeLiveChat();
+    liveConvId = conversation.id;
+    liveMessages = [];
+
+    // Sync the mock patient row so the existing overlay can render the
+    // familiar demo UI; the live socket drives the real data.
+    const target = syncMockPatient(conversation);
+    activeChatPatient = target;
+    chatInput = '';
+
+    liveChatSession = openChatSocket({
+      conversationId: conversation.id,
+      senderType: 'doctor',
+      senderId: doctor?.id ?? '',
+      onIncoming: (msg) => {
+        liveMessages = [...liveMessages, msg];
+        const apiMsg: ChatMessage = {
+          id: Number(msg.id) || Date.now(),
+          from: msg.sender_type === 'doctor' ? 'doctor' : 'patient',
+          text: msg.message ?? '',
+          time: formatApiTime(msg.created_at)
+        };
+        const p = patients.find((x) => x.id === conversation.patient_id);
+        if (p) p.messages = [...p.messages, apiMsg];
+      },
+      onError: () => {} // REST fallback keeps sending alive; no banner needed
+    });
+
+    fetchConversationMessages(conversation.id)
+      .then((rows) => {
+        if (liveConvId === conversation.id) {
+          liveMessages = rows;
+          const p = patients.find((x) => x.id === conversation.patient_id);
+          if (p) {
+            p.messages = rows.map((m) => ({
+              id: Number(m.id) || 0,
+              from: m.sender_type === 'doctor' ? 'doctor' : 'patient',
+              text: m.message ?? '',
+              time: formatApiTime(m.created_at)
+            }));
+          }
+        }
+      })
+      .catch(() => {});
+
+    setTimeout(() => {
+      if (chatBodyEl) chatBodyEl.scrollTop = chatBodyEl.scrollHeight;
+    }, 50);
+  }
+
+  /**
+   * Guarantee the mock list has a row for this real patient so the chat can be
+   * opened from the thread list. Keeps the demo patients untouched.
+   */
+  function syncMockPatient(conversation: ApiConversation): Patient {
+    let target = patients.find((p) => p.id === conversation.patient_id);
+    if (!target) {
+      target = {
+        id: conversation.patient_id,
+        name: apiPatients[conversation.patient_id]?.username ?? `مريض #${conversation.patient_id}`,
+        initials: (apiPatients[conversation.patient_id]?.username ?? 'م').charAt(0),
+        age: 0,
+        complaint: 'محادثة مباشرة',
+        status: 'active',
+        consultType: 'chat',
+        waitSince: '',
+        messages: []
+      };
+      patients = [target, ...patients];
+    }
+    return target;
+  }
+
+  function closeLiveChat() {
+    if (liveChatSession) {
+      liveChatSession.dispose();
+      liveChatSession = null;
+    }
+    liveConvId = '';
+    liveMessages = [];
+  }
+
+  function sendLiveMessage() {
+    const text = chatInput.trim();
+    if (!text || !liveConvId || !liveChatSession || liveSending) return;
+    liveSending = true;
+    chatInput = '';
+    try {
+      // Socket path with REST fallback (see $lib/chat.js). The patient's side
+      // receives it via `message.created`.
+      liveChatSession.send(text);
+    } finally {
+      liveSending = false;
+    }
+  }
+
+  function handleLiveChatKey(e: KeyboardEvent) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendLiveMessage();
+    }
+  }
+
+  function formatApiTime(iso?: string) {
+    if (!iso) return '';
+    try {
+      return new Date(iso).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return '';
+    }
+  }
+
+  $effect(() => {
+    const id = doctor?.id;
+    if (id) loadLiveChatFor(id);
+  });
+
+  $effect(() => {
+    return () => closeLiveChat();
+  });
+
   // ---------------- Patients list ----------------
 
   type PatientStatus = 'waiting' | 'active' | 'done' | 'scheduled';
@@ -774,6 +961,7 @@ import { goto } from '$app/navigation';
 
   function closeChat() {
     activeChatPatient = null;
+    closeLiveChat();
   }
 
   function sendMessage() {
@@ -804,8 +992,18 @@ import { goto } from '$app/navigation';
   function handleChatKey(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      sendMessage();
+      if (liveConvId && liveChatSession) sendLiveMessage();
+      else sendMessage();
     }
+  }
+
+  /**
+   * Unified send: routes to the live socket/REST path when a live
+   * conversation is open, otherwise falls back to the mock path.
+   */
+  function sendOrLive() {
+    if (liveConvId && liveChatSession) sendLiveMessage();
+    else sendMessage();
   }
 
   const statusLabel: Record<PatientStatus, string> = {
@@ -1266,6 +1464,45 @@ import { goto } from '$app/navigation';
       </ul>
 
     </section>
+
+
+    <!-- ===== LIVE CONVERSATIONS (Go backend) ===== -->
+    {#if isLiveDoctor && apiConversations.length > 0}
+      <section class="panel live-conv-panel">
+
+        <div class="panel-header">
+          <div class="panel-header-icon">
+            <MessageCircle size={20} />
+          </div>
+          <div>
+            <h3>محادثات مباشرة</h3>
+            <p>من الخادم — تُحدَّث لحظيًا عبر WebSocket</p>
+          </div>
+        </div>
+
+        <ul class="live-conv-list">
+          {#each apiConversations as conv (conv.id)}
+            <li
+              class="live-conv-item"
+              class:active={liveConvId === conv.id}
+              onclick={() => openLiveChat(conv)}
+            >
+              <div class="live-conv-avatar" aria-hidden="true">
+                {(apiPatients[conv.patient_id]?.username ?? 'م').charAt(0).toUpperCase()}
+              </div>
+              <div class="live-conv-info">
+                <strong>{apiPatients[conv.patient_id]?.username ?? `مريض #${conv.patient_id}`}</strong>
+                <p>آخر تحديث: {formatApiTime(conv.updated_at)}</p>
+              </div>
+              {#if liveConvId === conv.id}
+                <span class="live-badge">مفتوحة</span>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+
+      </section>
+    {/if}
 
 
     <!-- Settings heading -->
@@ -1734,7 +1971,7 @@ import { goto } from '$app/navigation';
         <button
           class="chat-send-btn"
           class:ready={chatInput.trim().length > 0}
-          onclick={sendMessage}
+          onclick={sendOrLive}
           aria-label="إرسال"
           disabled={chatInput.trim().length === 0}
         >
@@ -3103,6 +3340,92 @@ import { goto } from '$app/navigation';
     padding: 40px 0;
     color: var(--ink-soft);
     font-size: 0.9rem;
+  }
+
+  /* ============================================================
+     LIVE CONVERSATIONS
+   ============================================================ */
+  .live-conv-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .live-conv-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.65rem 0.85rem;
+    border-radius: 0.75rem;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.15s ease;
+    background: var(--white);
+    border: 1px solid var(--line-soft);
+  }
+
+  .live-conv-item:hover {
+    background: var(--pine-mist);
+    transform: translateX(-2px);
+  }
+
+  .live-conv-item.active {
+    background: var(--pine-light);
+    border-color: var(--pine-light);
+    color: #fff;
+  }
+
+  .live-conv-item.active .live-conv-info strong {
+    color: #fff;
+  }
+
+  .live-conv-item.active .live-conv-info p {
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  .live-conv-avatar {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: var(--apricot-mist);
+    color: var(--apricot-deep);
+    font-weight: 800;
+    font-size: 1rem;
+  }
+
+  .live-conv-item.active .live-conv-avatar {
+    background: rgba(255, 255, 255, 0.18);
+    color: #fff;
+  }
+
+  .live-conv-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .live-conv-info strong {
+    font-size: 0.9rem;
+    color: var(--ink);
+  }
+
+  .live-conv-info p {
+    font-size: 0.72rem;
+    color: var(--ink-muted);
+  }
+
+  .live-badge {
+    flex-shrink: 0;
+    font-size: 0.62rem;
+    font-weight: 700;
+    color: var(--success);
+    background: var(--success-mist);
+    padding: 2px 8px;
+    border-radius: 999px;
   }
 
   @media (max-width: 600px) {
