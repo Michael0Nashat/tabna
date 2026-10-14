@@ -51,6 +51,18 @@
   /** @type {Map<string|number, string>} */
   let doctorMap = new Map();
 
+  /**
+   * While a chat is open we poll the conversation history every few seconds
+   * (deduped by message id). The live socket (`openChatSocket`) is the fast
+   * path — it pushes the doctor's reply the instant the Go server stores it —
+   * but the polling guarantees the message still lands "at the same moment"
+   * even if the socket is down (Go server unreachable / wrong port).
+   */
+  /** @type {number | null} */
+  let historyTimer = null;
+  /** @type {Set<string>} */
+  const knownMessageIds = new Set();
+
   // Live socket for the open conversation. The Go backend pushes
   // `message.created` events through /ws/chat, so the doctor's reply shows
   // up without reloading. REST remains the fallback (see $lib/chat.js).
@@ -71,8 +83,40 @@
     // Ignore echoes of our own sends: both our socket and the REST fallback
     // surface the row we just created; the peer's side does not.
     if (msg?.sender_type === 'patient' && msg?.sender_id === String(patientId)) return;
+    if (msg?.id && knownMessageIds.has(msg.id)) return;
+    knownMessageIds.add(msg?.id);
     messages = [...messages, msg];
     scrollMessagesToBottom();
+  }
+
+  /**
+   * Poll the REST history API and surface any peer message that has not been
+   * appended yet. Runs while a chat is open so a doctor's reply is visible
+   * within ~3s even when the live socket is down.
+   */
+  function startHistoryPolling() {
+    stopHistoryPolling();
+    historyTimer = setInterval(() => {
+      if (!selectedConversationId) return;
+      fetchConversationMessages(String(selectedConversationId))
+        .then((rows) => {
+          for (const row of rows) {
+            if (row?.id && !knownMessageIds.has(row.id) && row.sender_type !== 'patient') {
+              knownMessageIds.add(row.id);
+              messages = [...messages, row];
+            }
+          }
+          scrollMessagesToBottom();
+        })
+        .catch(() => {}); // transient: keep polling
+    }, 3000);
+  }
+
+  function stopHistoryPolling() {
+    if (historyTimer !== null) {
+      clearInterval(historyTimer);
+      historyTimer = null;
+    }
   }
 
   /** @param {string|number} conversationId */
@@ -100,6 +144,8 @@
 
   /** @param {string|number} conversationId */
   function loadConversationMessages(conversationId) {
+    stopHistoryPolling();
+    knownMessageIds.clear();
     selectedConversationId = conversationId;
     loadMsgError = '';
     messages = [];
@@ -110,6 +156,7 @@
         // the user may have switched away while the fetch was in flight.
         if (selectedConversationId === conversationId) {
           messages = rows;
+          for (const row of rows) if (row?.id) knownMessageIds.add(row.id);
           scrollMessagesToBottom();
         }
       })
@@ -119,9 +166,13 @@
         }
       });
     openChat(conversationId);
+    startHistoryPolling();
   }
 
-  onDestroy(() => closeChat());
+  onDestroy(() => {
+    closeChat();
+    stopHistoryPolling();
+  });
 
   async function loadPatient() {
     if (!patientId) { error = 'لم يتم تحديد حساب المريض.'; loading = false; return; }

@@ -21,6 +21,7 @@ import { createWSClient, WS_URL } from './ws-chat-client';
 /**
  * @typedef {import('./ws-chat-client').ChatMessagePayload} ChatMessage
  * @typedef {import('./ws-chat-client').WSClient} WSClient
+ * @typedef {'socket' | 'rest' | 'poll'} IncomingSource
  */
 
 /** Resolve the Go WebSocket endpoint for the current page. */
@@ -87,26 +88,86 @@ export async function sendViaREST(conversationId, senderType, senderId, text) {
  * function that must be called on unmount / conversation switch so a stale
  * socket does not keep pushing into the next chat.
  *
+ * The socket is the fast path: it pushes `message.created` the instant the Go
+ * server stores a peer message. If the socket is down (Go server unreachable,
+ * wrong port, dropped connection), `openChatSocket` transparently falls back
+ * to polling the REST history API (immediately, then every 2.5s) so the peer
+ * still receives your messages "at the same moment" — they are never lost.
+ *
  * @param {object} opts
  * @param {string} opts.conversationId
  * @param {string} opts.senderType
  * @param {string} opts.senderId
- * @param {(msg: ChatMessage) => void} opts.onIncoming append the peer's new message
+ * @param {(msg: ChatMessage, meta: { source: IncomingSource }) => void} [opts.onIncoming]
+ *        append a new message (the peer's, or your own via the REST fallback)
  * @param {(error: string) => void} [opts.onError]
  * @returns {{ client: WSClient, send: (text: string) => void, dispose: () => void }}
  */
 export function openChatSocket({ conversationId, senderType, senderId, onIncoming, onError }) {
   const client = createWSClient(resolveWSUrl());
 
+  // When the socket is down (Go server unreachable / dropped), a peer's message
+  // cannot be pushed to this client, so fall back to polling the REST history
+  // API. Bounded by deduped ids so a message is surfaced exactly once no matter
+  // how many transports (socket push / REST send / poll) deliver it.
+  let closed = false;
+  /** @type {number | null} Polling timer id, or null when the socket is live. */
+  let pollTimer = null;
+  /** Message ids already surfaced (dedupe polling against socket pushes). */
+  const lastSeen = new Set();
+
+  const clearPolling = () => {
+    if (pollTimer !== null) {
+      window.clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  };
+
+  const pollOnce = () => {
+    if (closed) return;
+    loadMessages(conversationId)
+      .then((rows) => {
+        if (closed) return;
+        for (const m of rows) {
+          if (lastSeen.has(m.id)) continue;
+          lastSeen.add(m.id);
+          // Only surface messages the peer authored: our own sends are already
+          // surfaced by send() / the REST fallback path.
+          if (m.sender_type !== senderType) onIncoming?.(m, { source: 'poll' });
+        }
+      })
+      .catch(() => {
+        /* transient network failure: keep polling */
+      });
+  };
+
+  client.onClose = () => {
+    if (closed || typeof window === 'undefined') return;
+    clearPolling();
+    pollOnce();
+    pollTimer = window.setInterval(pollOnce, 2500);
+  };
+
+  client.onOpen = () => {
+    if (closed || typeof window === 'undefined') return;
+    clearPolling();
+    // Re-subscribe so live pushes resume, and clear the dedupe set so any peer
+    // message sent while we were offline lands exactly once via the socket.
+    lastSeen.clear();
+    client.subscribe(conversationId, senderType, senderId);
+  };
+
   client.onMessage = (event) => {
     if (event.type === 'message.created' && event.message) {
       // Only accept events for the conversation we subscribe to; the Go
       // server already routes per-socket, but never trust the wire twice.
       if (event.message.conversation_id === conversationId) {
-        onIncoming(event.message);
+        lastSeen.add(event.message.id);
+        onIncoming?.(event.message, { source: 'socket' });
       }
     }
   };
+
   if (onError) client.onError = onError;
 
   /**
@@ -122,7 +183,10 @@ export function openChatSocket({ conversationId, senderType, senderId, onIncomin
         .then((msg) => {
           // REST path returns the stored row — treat it as the same payload
           // the socket would have pushed, so the UI behaves identically.
-          if (msg) onIncoming(msg);
+          if (msg) {
+            lastSeen.add(msg.id);
+            onIncoming?.(msg, { source: 'rest' });
+          }
         })
         .catch((err) => onError?.(err instanceof Error ? err.message : String(err)));
     }
@@ -130,14 +194,20 @@ export function openChatSocket({ conversationId, senderType, senderId, onIncomin
 
   client
     .connect()
-    .then(() => client.subscribe(conversationId, senderType, senderId))
+    .then(() => {
+      if (!closed) client.subscribe(conversationId, senderType, senderId);
+    })
     .catch((err) => {
-      // Socket failed to open (Go server down / wrong port). The REST
-      // fallback still works, so this is not fatal.
+      // Socket failed to open (Go server down / wrong port). The REST polling
+      // fallback in onClose still delivers peer messages, so this is not fatal.
       onError?.(err instanceof Error ? err.message : String(err));
     });
 
-  const dispose = () => client.cleanup();
+  const dispose = () => {
+    closed = true;
+    clearPolling();
+    client.cleanup();
+  };
 
   return { client, send, dispose };
 }

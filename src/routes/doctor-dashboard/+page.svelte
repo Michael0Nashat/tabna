@@ -1,6 +1,7 @@
 ﻿<script lang="ts">
 import { goto } from '$app/navigation';
 import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/chat.js';
+import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
   import { page } from '$app/state';
   import {
     Stethoscope,
@@ -694,13 +695,100 @@ import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/
   let liveSending = $state(false);
   let liveChatSession = $state<ReturnType<typeof openChatSocket> | null>(null);
 
+  /**
+   * While a live chat is open we poll the REST history API (deduped by
+   * message id). The live socket is the fast path — it pushes the patient's
+   * message the instant the Go server stores it — but the polling guarantees
+   * the message still lands "at the same moment" even if the socket is down
+   * (Go server unreachable / wrong port).
+   */
+  /** @type {number | null} Timer for the open-thread message poll. */
+  let livePollTimer: number | null = null;
+  /** @type {number | null} Timer for the thread-list poll. */
+  let threadPollTimer: number | null = null;
+  /** Message ids already in `liveMessages` (dedupe poll against socket). */
+  const liveKnownIds = new Set();
+
   /** True when we know this doctor's API id (came in via ?id=). */
   const isLiveDoctor = $derived(doctor?.id !== undefined && doctor?.id !== '');
 
+  /**
+   * Surface a new peer message in both the open overlay and the mock thread
+   * list, deduped by id so socket pushes and polls never double-add.
+   */
+  function appendLiveMessage(msg: ApiChatMessage, openConvId: string) {
+    if (!msg?.id || liveKnownIds.has(String(msg.id))) return;
+    liveKnownIds.add(String(msg.id));
+    liveMessages = [...liveMessages, msg];
+    const targetPatientId = apiConversations.find((c) => c.id === openConvId)?.patient_id;
+    const target = targetPatientId != null ? patients.find((x) => x.id === targetPatientId) : null;
+    if (target) {
+      const mockMsg: ChatMessage = {
+        id: Number(msg.id) || Date.now(),
+        from: msg.sender_type === 'doctor' ? 'doctor' : 'patient',
+        text: msg.message ?? '',
+        time: formatApiTime(msg.created_at)
+      };
+      target.messages = [...(target.messages ?? []), mockMsg];
+    }
+  }
+
+  function startLivePolling() {
+    stopLivePolling();
+    if (!liveConvId) return;
+    livePollTimer = window.setInterval(() => {
+      const openId = liveConvId;
+      if (!openId) return;
+      fetchConversationMessages(openId)
+        .then((rows) => {
+          if (liveConvId !== openId || !rows) return;
+          for (const row of rows) {
+            if (row.sender_type === 'doctor') continue; // our own sends
+            appendLiveMessage(row, openId);
+          }
+        })
+        .catch(() => {}); // transient: keep polling
+    }, 3000);
+  }
+
+  function stopLivePolling() {
+    if (livePollTimer !== null) {
+      window.clearInterval(livePollTimer);
+      livePollTimer = null;
+    }
+  }
+
+  /**
+   * Re-pull the doctor's conversation threads. Runs while the dashboard is
+   * open so a brand-new patient message that creates a *new* conversation
+   * appears in the thread list without a manual reload.
+   */
+  async function refreshApiConversations(doctorId: string) {
+    if (!doctorId) return;
+    try {
+      const res = await fetch(`${CONVERSATIONS_API}?doctor_id=${encodeURIComponent(doctorId)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      apiConversations = Array.isArray(data?.conversations) ? data.conversations : [];
+    } catch {
+      /* transient: keep polling */
+    }
+  }
+
+  function stopThreadPolling() {
+    if (threadPollTimer !== null) {
+      window.clearInterval(threadPollTimer);
+      threadPollTimer = null;
+    }
+  }
+
   async function loadLiveChatFor(doctorId: string) {
+    stopLivePolling();
+    stopThreadPolling();
     apiConversations = [];
     apiPatients = {};
     liveMessages = [];
+    liveKnownIds.clear();
     liveConvId = '';
 
     if (!doctorId) return;
@@ -713,6 +801,9 @@ import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/
     } catch {
       return; // not fatal: mock list still works
     }
+
+    // Keep the thread list fresh while the dashboard is open.
+    threadPollTimer = window.setInterval(() => refreshApiConversations(doctorId), 5000);
 
     // Pull the patient rows so we can show real names next to each thread.
     const ids = [...new Set(apiConversations.map((c) => c.patient_id))];
@@ -730,6 +821,7 @@ import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/
     closeLiveChat();
     liveConvId = conversation.id;
     liveMessages = [];
+    liveKnownIds.clear();
 
     // Sync the mock patient row so the existing overlay can render the
     // familiar demo UI; the live socket drives the real data.
@@ -742,35 +834,31 @@ import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/
       senderType: 'doctor',
       senderId: doctor?.id ?? '',
       onIncoming: (msg) => {
-        liveMessages = [...liveMessages, msg];
-        const apiMsg: ChatMessage = {
-          id: Number(msg.id) || Date.now(),
-          from: msg.sender_type === 'doctor' ? 'doctor' : 'patient',
-          text: msg.message ?? '',
-          time: formatApiTime(msg.created_at)
-        };
-        const p = patients.find((x) => x.id === conversation.patient_id);
-        if (p) p.messages = [...p.messages, apiMsg];
+        // Dedupe by id: the socket push and the history poll both deliver the
+        // same peer message, so only the first copy lands.
+        appendLiveMessage(msg, liveConvId || conversation.id);
       },
       onError: () => {} // REST fallback keeps sending alive; no banner needed
     });
 
     fetchConversationMessages(conversation.id)
       .then((rows) => {
-        if (liveConvId === conversation.id) {
-          liveMessages = rows;
-          const p = patients.find((x) => x.id === conversation.patient_id);
-          if (p) {
-            p.messages = rows.map((m) => ({
-              id: Number(m.id) || 0,
-              from: m.sender_type === 'doctor' ? 'doctor' : 'patient',
-              text: m.message ?? '',
-              time: formatApiTime(m.created_at)
-            }));
-          }
+        if (liveConvId !== conversation.id || !rows) return;
+        liveMessages = rows.filter((m) => m.sender_type !== 'doctor');
+        for (const m of rows) if (m.sender_type !== 'doctor') liveKnownIds.add(String(m.id));
+        const p = patients.find((x) => x.id === conversation.patient_id);
+        if (p) {
+          p.messages = rows.map((m) => ({
+            id: Number(m.id) || 0,
+            from: m.sender_type === 'doctor' ? 'doctor' : 'patient',
+            text: m.message ?? '',
+            time: formatApiTime(m.created_at)
+          }));
         }
       })
       .catch(() => {});
+
+    startLivePolling();
   }
 
   /**
@@ -801,6 +889,7 @@ import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/
       liveChatSession.dispose();
       liveChatSession = null;
     }
+    stopLivePolling();
     liveConvId = '';
     liveMessages = [];
   }
