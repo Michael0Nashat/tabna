@@ -56,6 +56,15 @@
   // up without reloading. REST remains the fallback (see $lib/chat.js).
   /** @type {{ client: import('$lib/ws-chat-client').WSClient, send: (text: string) => void, dispose: () => void } | null} */
   let chatSession = $state(null);
+  /** @type {HTMLElement | null} */
+  let messagesEl = $state(null);
+
+  /** Scroll the message list to the bottom (smooth). */
+  function scrollMessagesToBottom() {
+    requestAnimationFrame(() => {
+      if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
+    });
+  }
 
   /** @param {import('$lib/ws-chat-client').ChatMessagePayload} msg */
   function appendMessage(msg) {
@@ -63,6 +72,7 @@
     // surface the row we just created; the peer's side does not.
     if (msg?.sender_type === 'patient' && msg?.sender_id === String(patientId)) return;
     messages = [...messages, msg];
+    scrollMessagesToBottom();
   }
 
   /** @param {string|number} conversationId */
@@ -98,7 +108,10 @@
       .then((rows) => {
         // Only keep the rows that belong to the conversation still on screen;
         // the user may have switched away while the fetch was in flight.
-        if (selectedConversationId === conversationId) messages = rows;
+        if (selectedConversationId === conversationId) {
+          messages = rows;
+          scrollMessagesToBottom();
+        }
       })
       .catch((err) => {
         if (selectedConversationId === conversationId) {
@@ -157,6 +170,7 @@
       // down it transparently falls back to the REST proxy so the message is
       // always stored. The peer's side receives it via `message.created`.
       chatSession.send(body);
+      scrollMessagesToBottom();
     } catch (err) {
       loadMsgError = err instanceof Error ? err.message : 'تعذّر إرسال الرسالة';
       newMessage = body;
@@ -247,7 +261,7 @@
             </div>
           {/if}
         </div>
-        <div class="pd-messages" class:has-error={loadMsgError}>
+        <div class="pd-messages" class:has-error={loadMsgError} bind:this={messagesEl}>
           {#if loadMsgError}
             <div class="pd-msg-error"><AlertCircle size={18} /><span>{loadMsgError}</span><button onclick={() => loadConversationMessages(selectedConversationId)}>إعادة المحاولة</button></div>
           {:else if messages.length === 0}
@@ -316,7 +330,11 @@
   .pd-chat-doctor-avatar { width: 34px; height: 34px; border-radius: 50%; background: #24544a; display: flex; align-items: center; justify-content: center; }
   .pd-chat-doctor strong { display: block; font-size: 0.95rem; }
   .pd-chat-status { font-size: 0.78rem; color: #8fbf9a; }
-  .pd-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .pd-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; scroll-behavior: smooth; }
+  .pd-messages::-webkit-scrollbar { width: 4px; }
+  .pd-messages::-webkit-scrollbar-track { background: transparent; }
+  .pd-messages::-webkit-scrollbar-thumb { background: #16a34a; border-radius: 99px; }
+  .pd-messages::-webkit-scrollbar-thumb:hover { background: #15803d; }
   .pd-msg-error { display: flex; align-items: center; gap: 8px; padding: 12px; background: #fef3e8; border-radius: 8px; color: #c25f2b; font-size: 0.9rem; }
   .pd-msg-error button { margin-right: auto; background: #c25f2b; color: #fff; border: none; padding: 4px 12px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; font-family: inherit; }
   .pd-msg-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: #4b564f; }

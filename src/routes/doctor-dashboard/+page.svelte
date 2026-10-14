@@ -1,4 +1,4 @@
-<script lang="ts">
+﻿<script lang="ts">
 import { goto } from '$app/navigation';
 import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/chat.js';
   import { page } from '$app/state';
@@ -771,10 +771,6 @@ import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/
         }
       })
       .catch(() => {});
-
-    setTimeout(() => {
-      if (chatBodyEl) chatBodyEl.scrollTop = chatBodyEl.scrollHeight;
-    }, 50);
   }
 
   /**
@@ -935,13 +931,25 @@ import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/
   let chatInput = $state('');
   let chatBodyEl = $state<HTMLElement | null>(null);
 
+  /**
+   * Keep the chat scrolled to the newest message whenever the open
+   * conversation gains rows (open, send, or live incoming). The body element
+   * is re-created on every open/close, so a $effect on the message list is
+   * more reliable than a one-shot setTimeout.
+   */
+  $effect(() => {
+    const p = activeChatPatient;
+    const n = p ? p.messages.length : 0;
+    requestAnimationFrame(() => {
+      if (chatBodyEl) chatBodyEl.scrollTop = chatBodyEl.scrollHeight;
+    });
+  });
+
   function openChat(patient: Patient) {
     activeChatPatient = patient;
     chatInput = '';
-    // scroll to bottom after render
-    setTimeout(() => {
-      if (chatBodyEl) chatBodyEl.scrollTop = chatBodyEl.scrollHeight;
-    }, 50);
+    // The $effect on activeChatPatient.messages.length triggers the
+    // scroll-to-bottom automatically after the overlay renders.
   }
 
   function closeChat() {
@@ -968,10 +976,6 @@ import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/
     // keep activeChatPatient in sync
     activeChatPatient = patients.find((p) => p.id === activeChatPatient!.id) ?? null;
     chatInput = '';
-
-    setTimeout(() => {
-      if (chatBodyEl) chatBodyEl.scrollTop = chatBodyEl.scrollHeight;
-    }, 30);
   }
 
   function handleChatKey(e: KeyboardEvent) {
@@ -3160,7 +3164,8 @@ import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/
   /* custom scrollbar */
   .chat-body::-webkit-scrollbar { width: 4px; }
   .chat-body::-webkit-scrollbar-track { background: transparent; }
-  .chat-body::-webkit-scrollbar-thumb { background: var(--line); border-radius: 99px; }
+  .chat-body::-webkit-scrollbar-thumb { background: #c25f2b; border-radius: 99px; }
+  .chat-body::-webkit-scrollbar-thumb:hover { background: #c25f2b; }
 
   .chat-empty {
     flex: 1;
