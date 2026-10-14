@@ -255,7 +255,13 @@
           {:else}
             {#each messages as msg (msg.id)}
               <div class="pd-msg-row" class:mine={msg.sender_type === 'patient'}>
-                <div class="pd-msg-bubble">{msg.message}<span class="pd-msg-time">{formatTime(msg.created_at)}</span></div>
+                <div class="pd-msg-bubble">
+                  {#if msg.sender_type === 'patient'}
+                    <span class="pd-msg-sender">{patient?.username || 'أنا'}</span>
+                  {/if}
+                  <p class="pd-msg-text">{msg.message}</p>
+                  <span class="pd-msg-time">{formatTime(msg.created_at)}</span>
+                </div>
               </div>
             {/each}
           {/if}
@@ -315,10 +321,14 @@
   .pd-msg-error button { margin-right: auto; background: #c25f2b; color: #fff; border: none; padding: 4px 12px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; font-family: inherit; }
   .pd-msg-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: #4b564f; }
   .pd-msg-empty p { font-size: 0.95rem; }
-  .pd-msg-row { display: flex; justify-content: flex-start; }
-  .pd-msg-bubble { max-width: 78%; padding: 10px 14px; border-radius: 12px; background: #e4ece9; color: #1d2621; font-size: 0.92rem; line-height: 1.5; }
-  .pd-msg-row.mine .pd-msg-bubble { background: #163832; color: #e4ece9; }
-  .pd-msg-time { display: block; font-size: 0.7rem; opacity: 0.6; margin-top: 4px; text-align: left; }
+  .pd-msg-row { display: flex; justify-content: flex-start; direction: rtl; }
+  .pd-msg-row.mine { justify-content: flex-end; }
+  .pd-msg-bubble { max-width: 78%; padding: 10px 14px; border-radius: 12px; background: #dfe9e5; color: #1d2621; font-size: 0.92rem; line-height: 1.5; border: 1px solid #cdd9d3; }
+  .pd-msg-row.mine .pd-msg-bubble { background: #163832; color: #e4ece9; border-color: #163832; }
+  .pd-msg-sender { display: block; font-size: 0.72rem; font-weight: 700; color: #4b564f; margin-bottom: 4px; }
+  .pd-msg-row.mine .pd-msg-sender { color: #9fd0b8; }
+  .pd-msg-text { margin: 0; word-break: break-word; }
+  .pd-msg-time { display: block; font-size: 0.7rem; opacity: 0.6; margin-top: 4px; text-align: start; }
   .pd-input-area { display: flex; align-items: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid #ddd5c4; background: #faf8f4; }
   .pd-textarea { flex: 1; resize: none; border: 1px solid #ddd5c4; border-radius: 10px; padding: 10px 14px; font-size: 0.92rem; font-family: inherit; direction: rtl; background: #fff; color: #1d2621; outline: none; min-height: 44px; max-height: 120px; }
   .pd-textarea:focus { border-color: #163832; }

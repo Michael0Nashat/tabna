@@ -873,20 +873,6 @@ import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/
 
   let patients = $state<Patient[]>([
     {
-      id: 1,
-      name: 'سارة أحمد علي',
-      initials: 'سأ',
-      age: 28,
-      complaint: 'آلام أسفل البطن منذ يومين',
-      status: 'waiting',
-      consultType: 'chat',
-      waitSince: 'منذ 5 دقائق',
-      messages: [
-        { id: 1, from: 'patient', text: 'السلام عليكم دكتور، أعاني من آلام حادة في أسفل البطن منذ يومين ولا أعرف سببها', time: '04:52 م' },
-        { id: 2, from: 'patient', text: 'الألم يزداد بالليل وعندي إفرازات غير طبيعية', time: '04:53 م' }
-      ]
-    },
-    {
       id: 2,
       name: 'منى محمود حسن',
       initials: 'مم',
@@ -945,7 +931,6 @@ import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/
   ]);
 
   // patients filter + شات state
-  let patientsFilter = $state<'all' | PatientStatus>('all');
   let activeChatPatient = $state<Patient | null>(null);
   let chatInput = $state('');
   let chatBodyEl = $state<HTMLElement | null>(null);
@@ -1006,17 +991,11 @@ import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/
     else sendMessage();
   }
 
-  const statusLabel: Record<PatientStatus, string> = {
+  const statusLabel = {
     waiting: 'في الانتظار',
     active: 'جارية',
     done: 'مكتملة',
     scheduled: 'مجدولة'
-  };
-
-  const consultTypeIcon: Record<Patient['consultType'], string> = {
-    chat: 'MessageCircle',
-    audio: 'Phone',
-    video: 'Video'
   };
 
   // ----------------------------------------------------------------
@@ -1359,112 +1338,6 @@ import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/
 
 
 
-    <!-- ===== PATIENTS LIST ===== -->
-    <section class="panel patients-panel">
-
-      <div class="panel-header">
-        <div class="panel-header-icon">
-          <Inbox size={20} />
-        </div>
-        <div>
-          <h3>قائمة المرضى</h3>
-          <p>استعرض مرضى اليوم، افتح المحادثة أو تابع الحالة</p>
-        </div>
-      </div>
-
-      <!-- filter tabs -->
-      <div class="patients-tabs" role="tablist">
-        {#each (['all','waiting','active','done','scheduled'] as const) as key}
-          <button
-            role="tab"
-            class="ptab"
-            class:active={patientsFilter === key}
-            onclick={() => (patientsFilter = key)}
-          >
-            {key === 'all' ? 'الكل' : statusLabel[key as PatientStatus]}
-            <span class="ptab-count">
-              {key === 'all' ? patients.length : patients.filter(p => p.status === key).length}
-            </span>
-          </button>
-        {/each}
-      </div>
-
-      <!-- table -->
-      <ul class="patients-list">
-        {#each patients.filter(p => patientsFilter === 'all' || p.status === patientsFilter) as patient (patient.id)}
-          <li class="patient-row status-{patient.status}">
-
-            <!-- avatar -->
-            <div class="patient-avatar" aria-hidden="true">{patient.initials}</div>
-
-            <!-- info -->
-            <div class="patient-info">
-              <div class="patient-name-row">
-                <strong>{patient.name}</strong>
-                <span class="patient-age">{patient.age} سنة</span>
-              </div>
-              <p class="patient-complaint">{patient.complaint}</p>
-              <div class="patient-meta">
-                <span class="consult-type-badge consult-{patient.consultType}">
-                  {#if patient.consultType === 'chat'}
-                    <MessageCircle size={12} />
-                  {:else if patient.consultType === 'audio'}
-                    <Phone size={12} />
-                  {:else}
-                    <Video size={12} />
-                  {/if}
-                  {patient.consultType === 'chat' ? 'شات' : patient.consultType === 'audio' ? 'صوتي' : 'فيديو'}
-                </span>
-                <span class="patient-wait">
-                  <ClockIcon size={12} />
-                  {patient.waitSince}
-                </span>
-              </div>
-            </div>
-
-            <!-- status pill -->
-            <span class="status-pill status-pill-{patient.status}">
-              {statusLabel[patient.status]}
-            </span>
-
-            <!-- actions -->
-            <div class="patient-actions">
-              {#if patient.status !== 'done'}
-                <button
-                  class="chat-open-btn"
-                  onclick={() => openChat(patient)}
-                  aria-label="فتح محادثة مع {patient.name}"
-                >
-                  <MessageCircle size={16} />
-                  فتح الشات
-                  {#if patient.messages.filter(m => m.from === 'patient').length > 0 && patient.status === 'waiting'}
-                    <span class="chat-unread-dot"></span>
-                  {/if}
-                </button>
-              {:else}
-                <button
-                  class="chat-view-btn"
-                  onclick={() => openChat(patient)}
-                  aria-label="عرض محادثة {patient.name}"
-                >
-                  عرض السجل
-                </button>
-              {/if}
-            </div>
-
-          </li>
-        {/each}
-
-        {#if patients.filter(p => patientsFilter === 'all' || p.status === patientsFilter).length === 0}
-          <li class="patients-empty">
-            <UserRound size={32} />
-            <span>لا يوجد مرضى في هذا القسم</span>
-          </li>
-        {/if}
-      </ul>
-
-    </section>
-
 
     <!-- ===== LIVE CONVERSATIONS (Go backend) ===== -->
     {#if isLiveDoctor && apiConversations.length > 0}
@@ -1485,8 +1358,12 @@ import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/
             <li
               class="live-conv-item"
               class:active={liveConvId === conv.id}
-              onclick={() => openLiveChat(conv)}
             >
+              <button
+                class="live-conv-trigger"
+                aria-label={`فتح محادثة ${apiPatients[conv.patient_id]?.username ?? `مريض #${conv.patient_id}`}`}
+                onclick={() => openLiveChat(conv)}
+              >
               <div class="live-conv-avatar" aria-hidden="true">
                 {(apiPatients[conv.patient_id]?.username ?? 'م').charAt(0).toUpperCase()}
               </div>
@@ -1497,6 +1374,7 @@ import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/
               {#if liveConvId === conv.id}
                 <span class="live-badge">مفتوحة</span>
               {/if}
+              </button>
             </li>
           {/each}
         </ul>
@@ -2672,90 +2550,10 @@ import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/
     gap: 18px;
   }
 
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-  }
-
-  .field span {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--ink);
-  }
-
-  .field input,
-  .field select {
-    font-family: var(--font-body);
-    font-size: 0.95rem;
-    color: var(--ink);
-    background: var(--paper-deep);
-    border: 1.5px solid var(--line);
-    border-radius: 12px;
-    padding: 12px 16px;
-    transition: border-color 0.15s ease;
-  }
-
-  .field input:focus,
-  .field select:focus {
-    border-color: var(--pine-light);
-    outline: none;
-  }
-
   @media (max-width: 560px) {
     .rules-grid {
       grid-template-columns: 1fr;
     }
-  }
-
-  .booking-types {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    padding-top: 18px;
-    border-top: 1px dashed var(--line);
-  }
-
-  .booking-types-label {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--ink);
-  }
-
-  .checkbox-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 0.9rem;
-    color: var(--ink-soft);
-    cursor: pointer;
-  }
-
-  .checkbox-row input {
-    position: absolute;
-    opacity: 0;
-    width: 0;
-    height: 0;
-  }
-
-  .checkbox-box {
-    width: 22px;
-    height: 22px;
-    border-radius: 7px;
-    border: 1.5px solid var(--line);
-    background: var(--white);
-    color: transparent;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-  }
-
-  .checkbox-row input:checked + .checkbox-box {
-    background: var(--pine);
-    border-color: var(--pine);
-    color: var(--paper);
   }
 
   /* ---------------- Page actions ---------------- */
@@ -3089,260 +2887,6 @@ import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/
   }
 
   /* ============================================================
-     PATIENTS LIST
-  ============================================================ */
-  .patients-panel {
-    gap: 20px;
-  }
-
-  /* --- filter tabs --- */
-  .patients-tabs {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    padding-bottom: 4px;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .ptab {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.84rem;
-    font-weight: 600;
-    color: var(--ink-soft);
-    padding: 7px 14px;
-    border-radius: 999px;
-    border: 1.5px solid transparent;
-    transition: background-color 0.15s, color 0.15s, border-color 0.15s;
-  }
-
-  .ptab:hover {
-    background: var(--paper-deep);
-    color: var(--ink);
-  }
-
-  .ptab.active {
-    background: var(--pine);
-    color: var(--paper);
-    border-color: var(--pine);
-  }
-
-  .ptab-count {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 18px;
-    height: 18px;
-    padding: 0 5px;
-    border-radius: 999px;
-    background: rgba(255,255,255,0.25);
-    font-size: 0.72rem;
-    font-weight: 700;
-  }
-
-  .ptab:not(.active) .ptab-count {
-    background: var(--paper-deep);
-    color: var(--ink-soft);
-  }
-
-  /* --- patients rows --- */
-  .patients-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .patient-row {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 16px 18px;
-    border-radius: 16px;
-    border: 1.5px solid var(--line);
-    background: var(--white);
-    transition: border-color 0.15s, box-shadow 0.15s;
-    flex-wrap: wrap;
-  }
-
-  .patient-row:hover {
-    border-color: var(--pine-light);
-    box-shadow: 0 4px 16px -8px rgba(22,56,50,0.15);
-  }
-
-  /* ── patient row border colors ── */
-  .patient-row.status-waiting   { border-right: 4px solid var(--status-waiting-color); }
-  .patient-row.status-active    { border-right: 4px solid var(--status-active-color); }
-  .patient-row.status-done      { border-right: 4px solid var(--line); opacity: 0.75; }
-  .patient-row.status-scheduled { border-right: 4px solid var(--status-scheduled-color); }
-
-  .patient-avatar {
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    background: var(--grad-pine);
-    color: var(--paper);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1rem;
-    font-weight: 700;
-    flex-shrink: 0;
-    box-shadow: var(--shadow-xs);
-  }
-
-  .patient-info {
-    flex: 1;
-    min-width: 160px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .patient-name-row {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .patient-name-row strong {
-    font-size: 0.95rem;
-    color: var(--ink);
-  }
-
-  .patient-age {
-    font-size: 0.78rem;
-    color: var(--ink-soft);
-    background: var(--paper-deep);
-    padding: 2px 8px;
-    border-radius: 999px;
-  }
-
-  .patient-complaint {
-    font-size: 0.84rem;
-    color: var(--ink-soft);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 280px;
-  }
-
-  .patient-meta {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-top: 2px;
-  }
-
-  .consult-type-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    padding: 3px 9px;
-    border-radius: 999px;
-  }
-
-  /* ── consult type badges ── */
-  .consult-chat      { background: var(--chat-mist);  color: var(--chat-color); }
-  .consult-audio     { background: var(--audio-mist); color: var(--audio-color); }
-  .consult-video     { background: var(--video-mist); color: var(--video-color); }
-
-  .patient-wait {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 0.75rem;
-    color: var(--ink-soft);
-  }
-
-  /* --- status pills --- */
-  .status-pill {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.75rem;
-    font-weight: 700;
-    padding: 5px 13px;
-    border-radius: 999px;
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-
-  /* ── status pills ── */
-  .status-pill-waiting   { background: var(--status-waiting-mist);   color: var(--status-waiting-color); }
-  .status-pill-active    { background: var(--status-active-mist);    color: var(--status-active-color); }
-  .status-pill-done      { background: var(--status-done-mist);      color: var(--status-done-color); }
-  .status-pill-scheduled { background: var(--status-scheduled-mist); color: var(--status-scheduled-color); }
-
-  /* --- patient action buttons --- */
-  .patient-actions {
-    flex-shrink: 0;
-  }
-
-  .chat-open-btn {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--ink);
-    background: var(--grad-apricot);
-    padding: 9px 18px;
-    border-radius: 999px;
-    transition: background 0.15s, transform 0.15s, box-shadow 0.15s;
-    box-shadow: var(--shadow-apricot);
-  }
-
-  .chat-open-btn:hover {
-    background: linear-gradient(135deg, #c25f2b 0%, #a34d22 100%);
-    transform: translateY(-2px);
-    box-shadow: 0 10px 24px -8px rgba(194, 95, 43, 0.55);
-  }
-
-  .chat-unread-dot {
-    position: absolute;
-    top: 6px;
-    left: 6px;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--danger-soft);
-    border: 2px solid var(--white);
-  }
-
-  .chat-view-btn {
-    font-size: 0.83rem;
-    font-weight: 600;
-    color: var(--ink-soft);
-    border: 1.5px solid var(--line);
-    padding: 8px 16px;
-    border-radius: 999px;
-    transition: background-color 0.15s;
-  }
-
-  .chat-view-btn:hover {
-    background: var(--paper-deep);
-    color: var(--ink);
-  }
-
-  .patients-empty {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-    padding: 40px 0;
-    color: var(--ink-soft);
-    font-size: 0.9rem;
-  }
-
-  /* ============================================================
      LIVE CONVERSATIONS
    ============================================================ */
   .live-conv-list {
@@ -3354,21 +2898,29 @@ import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/
   .live-conv-item {
     display: flex;
     align-items: center;
+  }
+
+  .live-conv-trigger {
+    all: unset;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
     gap: 0.75rem;
+    width: 100%;
     padding: 0.65rem 0.85rem;
     border-radius: 0.75rem;
     cursor: pointer;
-    transition: background 0.15s ease, transform 0.15s ease;
     background: var(--white);
     border: 1px solid var(--line-soft);
+    transition: background 0.15s ease, transform 0.15s ease;
   }
 
-  .live-conv-item:hover {
+  .live-conv-item:hover .live-conv-trigger {
     background: var(--pine-mist);
     transform: translateX(-2px);
   }
 
-  .live-conv-item.active {
+  .live-conv-item.active .live-conv-trigger {
     background: var(--pine-light);
     border-color: var(--pine-light);
     color: #fff;
@@ -3426,12 +2978,6 @@ import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/
     background: var(--success-mist);
     padding: 2px 8px;
     border-radius: 999px;
-  }
-
-  @media (max-width: 600px) {
-    .patient-row { flex-direction: column; align-items: flex-start; }
-    .patient-actions { align-self: stretch; }
-    .chat-open-btn, .chat-view-btn { width: 100%; justify-content: center; }
   }
 
   /* ============================================================
