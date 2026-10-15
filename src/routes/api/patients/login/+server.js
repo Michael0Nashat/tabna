@@ -69,7 +69,8 @@ export async function POST({ request, fetch }) {
 		return json({ error: data.error ?? 'Unexpected response from the patients API' }, { status });
 	}
 
-	const patient = data.patient;
+	/** @type {Record<string, unknown>} */
+	const patient = typeof data.patient === 'object' && data.patient !== null && !Array.isArray(data.patient) ? /** @type {Record<string, unknown>} */ (data.patient) : {};
 	return json({
 		id: typeof patient?.id === 'number' ? patient.id : null,
 		username: typeof patient?.username === 'string' ? patient.username : '',

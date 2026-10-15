@@ -1,14 +1,14 @@
 ﻿<script lang="ts">
-import { goto } from '$app/navigation';
-import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/chat.js';
-import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
+  import { goto } from '$app/navigation';
   import { page } from '$app/state';
+  import { untrack } from 'svelte';
+  import { openChatSocket, loadMessages as fetchConversationMessages } from '$lib/chat.js';
+  import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
   import {
     Stethoscope,
     Star,
     ShieldCheck,
     CheckCircle2,
-    Clock3,
     Users,
     MessageCircle,
     Phone,
@@ -18,9 +18,7 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     ArrowLeft,
     Save,
     X,
-    TrendingUp,
     Bell,
-    Coffee,
     BadgeCheck,
     ChevronDown,
     ChevronUp,
@@ -31,8 +29,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     PhoneCall,
     VideoIcon,
     ClockIcon,
-    UserRound,
-    Inbox,
     MapPin,
     Building2,
     Plus,
@@ -42,7 +38,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
 
   // ---------------- Doctor profile (live from the Go API) ----------------
 
-  // Mirrors the doctor row returned by GET /doctors.
   interface ApiDoctor {
     id: string;
     full_name: string;
@@ -87,7 +82,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     return {
       id: row.id,
       name,
-      // Composed from real API fields instead of a hardcoded marketing line.
       tagline: `${degree} — ${specialty}`,
       degree,
       specialty,
@@ -105,10 +99,7 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
   let loadingDoctors = $state(true);
   let doctorsError = $state('');
 
-  // Login hands over the resolved doctor via /doctor-dashboard?id=<uuid> (see
-  // submitLogin in src/routes/+page.svelte). Without it the dashboard still
-  // opens, falling back to the first row, so the route keeps working when it is
-  // visited directly.
+  // Login hands over the resolved doctor via /doctor-dashboard?id=<uuid>.
   const activeDoctorId = $derived(page.url.searchParams.get('id') ?? '');
 
   const doctor = $derived(
@@ -116,6 +107,11 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
       doctors[0] ??
       null
   );
+
+  // FIX 1: a primitive id. Effects depend on this string instead of the whole
+  // `doctor` object, so reassigning `doctors` (avatar, online toggle) no longer
+  // re-runs the clinics / live-chat / avatar effects.
+  const doctorId = $derived(doctor?.id ?? '');
 
   async function loadDoctors() {
     loadingDoctors = true;
@@ -144,24 +140,24 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
   }
 
   $effect(() => {
-    loadDoctors();
+    untrack(() => loadDoctors());
   });
 
   // ---------------- Profile picture ----------------
 
-  // The list endpoint omits profile_image (see GetDoctors in server.go), so the
-  // picture is fetched per doctor from GET /doctors/:id and cached per id so
-  // switching back and forth doesn't refetch the base64 payload.
   let avatarFailed = $state(false);
 
   const avatarSrc = $derived(doctor?.profileImage && !avatarFailed ? doctor.profileImage : '');
 
-  $effect(() => {
-    const id = doctor?.id;
-    if (!id || doctor?.profileImage) return;
+  // FIX 1: fetch the picture once per doctor id (previously an empty picture
+  // reassigned `doctors`, which re-triggered the effect forever).
+  const avatarRequested = new Set<string>();
 
+  $effect(() => {
+    const id = doctorId;
+    if (!id || avatarRequested.has(id)) return;
+    avatarRequested.add(id);
     avatarFailed = false;
-    let cancelled = false;
 
     (async () => {
       try {
@@ -170,18 +166,13 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
 
         const data = await res.json();
         const img = typeof data?.profile_image === 'string' ? data.profile_image : '';
-        if (cancelled) return;
 
         doctors = doctors.map((d) => (d.id === id ? { ...d, profileImage: img } : d));
       } catch {
-        // A missing picture is not a page-level failure: the avatar falls back
-        // to the doctor's initial.
+        // A missing picture is not a page-level failure; allow a later retry.
+        avatarRequested.delete(id);
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
   });
 
   function handleAvatarError() {
@@ -190,13 +181,9 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
 
   // ---------------- Online status ----------------
 
-  // Seeded from the real API value once the doctor row loads; kept in local
-  // state so the toggle is instant (optimistic). The PATCH call syncs the
-  // change to the backend and rolls back on failure.
   let isOnline = $state(false);
   let togglingOnline = $state(false);
 
-  // Sync isOnline whenever the resolved doctor changes (e.g. after loadDoctors).
   $effect(() => {
     if (doctor) isOnline = doctor.isOnline;
   });
@@ -204,14 +191,15 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
   async function toggleOnlineStatus() {
     if (!doctor || togglingOnline) return;
 
+    const id = doctor.id;
     const next = !isOnline;
 
-    // Optimistic update — feels instant to the user.
+    // Optimistic update.
     isOnline = next;
     togglingOnline = true;
 
     try {
-      const res = await fetch(`${DOCTORS_API}/${doctor.id}/status`, {
+      const res = await fetch(`${DOCTORS_API}/${id}/status`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ is_online: next })
@@ -220,16 +208,11 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const data = await res.json();
+      const confirmed = typeof data.is_online === 'boolean' ? data.is_online : next;
+      isOnline = confirmed;
 
-      // Keep local state in sync with what the server confirmed.
-      isOnline = typeof data.is_online === 'boolean' ? data.is_online : next;
-
-      // Also update the cached doctor list so switching doctors stays correct.
-      doctors = doctors.map((d) =>
-        d.id === doctor!.id ? { ...d, isOnline } : d
-      );
+      doctors = doctors.map((d) => (d.id === id ? { ...d, isOnline: confirmed } : d));
     } catch {
-      // Roll back the optimistic update on any failure.
       isOnline = !next;
     } finally {
       togglingOnline = false;
@@ -256,14 +239,13 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
 
   const WORK_PLACES_API = '/api/work-places';
 
-  // API shape returned by GET /work-places
   interface ApiSchedule {
     id: number;
     work_place_id: string;
-    day_of_week: number;   // 0=السبت … 6=الجمعة
+    day_of_week: number; // 0=السبت … 6=الجمعة
     day_name: string;
     is_off: boolean;
-    from_time?: string;    // "HH:MM"
+    from_time?: string; // "HH:MM"
     to_time?: string;
   }
 
@@ -278,11 +260,10 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     schedules?: ApiSchedule[];
   }
 
-  // Local UI types
   type PlaceType = 'عيادة خاصة' | 'مستشفى' | 'مركز طبي' | 'مستوصف';
 
   interface ClinicSlot {
-    id: number;   // local-only counter for keying, not sent to API
+    id: number; // local-only counter for keying, not sent to API
     from: string; // "HH:MM"
     to: string;
   }
@@ -295,9 +276,7 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
   }
 
   interface Clinic {
-    // API-assigned UUID once saved; empty string for new (unsaved) rows
-    apiId: string;
-    // Stable local key for Svelte {#each} tracking before the row has an apiId
+    apiId: string; // empty for unsaved rows
     localId: number;
     type: PlaceType;
     name: string;
@@ -305,24 +284,23 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     phone: string;
     consultFee: number;
     days: ClinicDay[];
-    // true while a save/delete request is in flight for this specific row
     saving: boolean;
-    // non-empty when the last save for this row failed
     saveError: string;
   }
 
-  // Day-of-week definitions: 0=السبت … 6=الجمعة (matches the Go API)
   const DAY_META: { dayOfWeek: number; label: string }[] = [
-    { dayOfWeek: 0, label: 'السبت'    },
-    { dayOfWeek: 1, label: 'الأحد'    },
-    { dayOfWeek: 2, label: 'الاثنين'  },
+    { dayOfWeek: 0, label: 'السبت' },
+    { dayOfWeek: 1, label: 'الأحد' },
+    { dayOfWeek: 2, label: 'الاثنين' },
     { dayOfWeek: 3, label: 'الثلاثاء' },
     { dayOfWeek: 4, label: 'الأربعاء' },
-    { dayOfWeek: 5, label: 'الخميس'  },
-    { dayOfWeek: 6, label: 'الجمعة'  },
+    { dayOfWeek: 5, label: 'الخميس' },
+    { dayOfWeek: 6, label: 'الجمعة' }
   ];
 
-  // Build blank days (all off) for a brand-new clinic
+  // Declared before first use (schedulesToDays increments it).
+  let slotIdCounter = 0;
+
   function blankDays(): ClinicDay[] {
     return DAY_META.map((d) => ({
       dayOfWeek: d.dayOfWeek,
@@ -332,9 +310,7 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     }));
   }
 
-  // Convert API schedule rows → local ClinicDay[]
   function schedulesToDays(schedules: ApiSchedule[]): ClinicDay[] {
-    // Group by day_of_week
     const byDay = new Map<number, ApiSchedule[]>();
     for (const s of schedules) {
       const arr = byDay.get(s.day_of_week) ?? [];
@@ -345,30 +321,31 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
 
     return DAY_META.map((d) => {
       const rows = byDay.get(d.dayOfWeek) ?? [];
-      // A day is off when it has no rows OR all rows have is_off = true
       const isOff = rows.length === 0 || rows.every((r) => r.is_off);
       const slots: ClinicSlot[] = isOff
         ? []
         : rows
             .filter((r) => !r.is_off && hhmm(r.from_time) && hhmm(r.to_time))
-            .map((r) => ({ id: ++slotIdCounter, from: hhmm(r.from_time), to: hhmm(r.to_time) }))
+            .map((r) => ({ id: ++slotIdCounter, from: hhmm(r.from_time), to: hhmm(r.to_time) }));
       return { dayOfWeek: d.dayOfWeek, label: d.label, isOff, slots };
     });
   }
 
-  // Convert local ClinicDay[] → API schedule input array
+  const padTime = (t: string) =>
+    t
+      .split(':')
+      .map((p) => p.padStart(2, '0'))
+      .join(':');
+
   function daysToSchedules(days: ClinicDay[]) {
     const out: { day_of_week: number; is_off: boolean; from_time?: string; to_time?: string }[] = [];
     for (const day of days) {
       if (day.isOff || day.slots.length === 0) {
         out.push({ day_of_week: day.dayOfWeek, is_off: true });
       } else {
-        const validSlots = day.slots.filter((slot) => {
-          if (!slot.from || !slot.to) return false;
-          // Normalize to zero-padded HH:MM before comparing to handle non-padded API values
-          const pad = (t: string) => t.split(':').map((p) => p.padStart(2, '0')).join(':');
-          return pad(slot.from) < pad(slot.to);
-        });
+        const validSlots = day.slots.filter(
+          (slot) => slot.from && slot.to && padTime(slot.from) < padTime(slot.to)
+        );
         if (validSlots.length === 0) {
           out.push({ day_of_week: day.dayOfWeek, is_off: true });
         } else {
@@ -381,72 +358,67 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     return out;
   }
 
-  // Map API place_type string → local UI PlaceType
   function toLocalType(apiType: string): PlaceType {
     const map: Record<string, PlaceType> = {
       'عيادة خاصة': 'عيادة خاصة',
-      'مستشفى':     'مستشفى',
-      'مركز طبي':   'مركز طبي',
-      'مستوصف':     'مستوصف',
+      'مستشفى': 'مستشفى',
+      'مركز طبي': 'مركز طبي',
+      'مستوصف': 'مستوصف'
     };
     return map[apiType] ?? 'عيادة خاصة';
   }
 
-  // Map local PlaceType → API place_type string (same values, kept for clarity)
-  function toApiType(t: PlaceType): string { return t; }
+  function toApiType(t: PlaceType): string {
+    return t;
+  }
 
   function apiToClinic(wp: ApiWorkPlace, localId: number): Clinic {
     return {
-      apiId:      wp.id,
+      apiId: wp.id,
       localId,
-      type:       toLocalType(wp.place_type),
-      name:       wp.name,
-      address:    wp.address,
-      phone:      wp.phone ?? '',
+      type: toLocalType(wp.place_type),
+      name: wp.name,
+      address: wp.address,
+      phone: wp.phone ?? '',
       consultFee: wp.exam_price ?? 0,
-      days:       schedulesToDays(wp.schedules ?? []),
-      saving:     false,
-      saveError:  '',
+      days: schedulesToDays(wp.schedules ?? []),
+      saving: false,
+      saveError: ''
     };
   }
 
-  let clinics          = $state<Clinic[]>([]);
-  let clinicsLoading   = $state(false);
-  let clinicsError     = $state('');
-  let slotIdCounter    = 0;
-  let localIdCounter   = $state(1);
+  let clinics = $state<Clinic[]>([]);
+  let clinicsLoading = $state(false);
+  let clinicsError = $state('');
+  let localIdCounter = 1; // plain counter: never needs to trigger effects
 
-  // expanded / collapsed per localId
   let expandedClinicIds = $state<number[]>([]);
 
-  // Load work places from the API whenever the resolved doctor changes
-  $effect(() => {
-    const id = doctor?.id;
-    if (!id) return;
-
+  async function fetchClinics(id: string) {
     clinicsLoading = true;
-    clinicsError   = '';
+    clinicsError = '';
 
-    (async () => {
-      try {
-        const res  = await fetch(`${WORK_PLACES_API}?doctor_id=${encodeURIComponent(id)}`);
-        const data = await res.json();
+    try {
+      const res = await fetch(`${WORK_PLACES_API}?doctor_id=${encodeURIComponent(id)}`);
+      const data = await res.json();
 
-        if (!res.ok) throw new Error(data?.error ?? `فشل تحميل أماكن العمل (${res.status})`);
+      if (!res.ok) throw new Error(data?.error ?? `فشل تحميل أماكن العمل (${res.status})`);
 
-        const rows: ApiWorkPlace[] = Array.isArray(data?.work_places) ? data.work_places : [];
-        let counter = localIdCounter;
-        clinics = rows.map((wp) => apiToClinic(wp, counter++));
-        localIdCounter = counter;
+      const rows: ApiWorkPlace[] = Array.isArray(data?.work_places) ? data.work_places : [];
+      clinics = rows.map((wp) => apiToClinic(wp, ++localIdCounter));
+      expandedClinicIds = clinics.length > 0 ? [clinics[0].localId] : [];
+    } catch (err) {
+      clinicsError = err instanceof Error ? err.message : 'تعذّر تحميل أماكن العمل';
+    } finally {
+      clinicsLoading = false;
+    }
+  }
 
-        // auto-expand the first clinic for convenience
-        if (clinics.length > 0) expandedClinicIds = [clinics[0].localId];
-      } catch (err) {
-        clinicsError = err instanceof Error ? err.message : 'تعذّر تحميل أماكن العمل';
-      } finally {
-        clinicsLoading = false;
-      }
-    })();
+  // FIX 1: depends only on the id string, so unsaved edits are not wiped.
+  $effect(() => {
+    const id = doctorId;
+    if (!id) return;
+    untrack(() => fetchClinics(id));
   });
 
   function toggleClinicExpand(localId: number) {
@@ -455,52 +427,48 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
       : [...expandedClinicIds, localId];
   }
 
-  // Add a blank unsaved clinic row locally (saved on "حفظ الإعدادات")
   function addClinic() {
     const localId = ++localIdCounter;
     clinics = [
       ...clinics,
       {
-        apiId:      '',
+        apiId: '',
         localId,
-        type:       'عيادة خاصة',
-        name:       '',
-        address:    '',
-        phone:      '',
+        type: 'عيادة خاصة',
+        name: '',
+        address: '',
+        phone: '',
         consultFee: 0,
-        days:       blankDays(),
-        saving:     false,
-        saveError:  '',
+        days: blankDays(),
+        saving: false,
+        saveError: ''
       }
     ];
     expandedClinicIds = [...expandedClinicIds, localId];
   }
 
-  // Delete from API if saved, then remove locally
   async function removeClinic(localId: number) {
     const clinic = clinics.find((c) => c.localId === localId);
     if (!clinic) return;
 
-    // Not yet saved → just drop it locally
     if (!clinic.apiId) {
       clinics = clinics.filter((c) => c.localId !== localId);
       expandedClinicIds = expandedClinicIds.filter((x) => x !== localId);
       return;
     }
 
-    // Mark as saving to disable the button
-    clinics = clinics.map((c) => c.localId === localId ? { ...c, saving: true, saveError: '' } : c);
+    clinics = clinics.map((c) => (c.localId === localId ? { ...c, saving: true, saveError: '' } : c));
 
     try {
-      const res  = await fetch(`${WORK_PLACES_API}/${clinic.apiId}`, { method: 'DELETE' });
+      const res = await fetch(`${WORK_PLACES_API}/${clinic.apiId}`, { method: 'DELETE' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error ?? `فشل الحذف (${res.status})`);
 
-      clinics           = clinics.filter((c) => c.localId !== localId);
+      clinics = clinics.filter((c) => c.localId !== localId);
       expandedClinicIds = expandedClinicIds.filter((x) => x !== localId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'تعذّر حذف المكان';
-      clinics = clinics.map((c) => c.localId === localId ? { ...c, saving: false, saveError: msg } : c);
+      clinics = clinics.map((c) => (c.localId === localId ? { ...c, saving: false, saveError: msg } : c));
     }
   }
 
@@ -515,17 +483,13 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
         ...c,
         days: c.days.map((d) => {
           if (d.dayOfWeek !== dayOfWeek) return d;
-          const nowOff = !d.isOff;
-          if (nowOff) {
+          if (!d.isOff) {
             // Going off → keep slots in memory so they restore if toggled back on
             return { ...d, isOff: true };
-          } else {
-            // Going on → restore previous slots if any, otherwise add a default slot
-            const restored = d.slots.length > 0
-              ? d.slots
-              : [{ id: ++slotIdCounter, from: '09:00', to: '17:00' }];
-            return { ...d, isOff: false, slots: restored };
           }
+          const restored =
+            d.slots.length > 0 ? d.slots : [{ id: ++slotIdCounter, from: '09:00', to: '17:00' }];
+          return { ...d, isOff: false, slots: restored };
         })
       };
     });
@@ -567,7 +531,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     return `${hour12.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')} ${period}`;
   }
 
-  // Save a single clinic to the API (create or update) then persist its schedules
   async function saveClinic(clinic: Clinic): Promise<ClinicDay[]> {
     if (!doctor?.id) throw new Error('لم يتم تحديد الطبيب');
 
@@ -575,56 +538,57 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     const latest = clinics.find((c) => c.localId === clinic.localId) ?? clinic;
 
     const body = {
-      doctor_id:  doctor.id,
+      doctor_id: doctor.id,
       place_type: toApiType(latest.type),
-      name:       latest.name.trim(),
-      address:    latest.address.trim(),
-      phone:      latest.phone.trim(),
-      exam_price: latest.consultFee || null,
+      name: latest.name.trim(),
+      address: latest.address.trim(),
+      phone: latest.phone.trim(),
+      exam_price: latest.consultFee || null
     };
 
     let apiId = latest.apiId;
 
     if (!apiId) {
-      // Create
-      const res  = await fetch(WORK_PLACES_API, {
-        method:  'POST',
+      const res = await fetch(WORK_PLACES_API, {
+        method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body:    JSON.stringify(body),
+        body: JSON.stringify(body)
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? `فشل الإنشاء (${res.status})`);
       apiId = (data?.work_place as ApiWorkPlace)?.id ?? '';
       if (!apiId) throw new Error('لم يُرجع السيرفر معرّف المكان');
-      // Persist the new apiId immediately so Delete works if Save fails below
-      clinics = clinics.map((c) => c.localId === latest.localId ? { ...c, apiId } : c);
+      // Persist the new apiId immediately so Delete works if a later step fails
+      clinics = clinics.map((c) => (c.localId === latest.localId ? { ...c, apiId } : c));
     } else {
-      // Update
-      const res  = await fetch(`${WORK_PLACES_API}/${apiId}`, {
-        method:  'PUT',
+      const res = await fetch(`${WORK_PLACES_API}/${apiId}`, {
+        method: 'PUT',
         headers: { 'content-type': 'application/json' },
-        body:    JSON.stringify({ place_type: body.place_type, name: body.name, address: body.address, phone: body.phone, exam_price: body.exam_price }),
+        body: JSON.stringify({
+          place_type: body.place_type,
+          name: body.name,
+          address: body.address,
+          phone: body.phone,
+          exam_price: body.exam_price
+        })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? `فشل التحديث (${res.status})`);
     }
 
-    // Re-read latest days right before building the payload (user may have edited after loop started)
     const currentDays = (clinics.find((c) => c.localId === latest.localId) ?? latest).days;
-    const schedPayload = { schedules: daysToSchedules(currentDays) };
     const schedRes = await fetch(`${WORK_PLACES_API}/${apiId}/schedules`, {
-      method:  'POST',
+      method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body:    JSON.stringify(schedPayload),
+      body: JSON.stringify({ schedules: daysToSchedules(currentDays) })
     });
     const schedData = await schedRes.json();
     if (!schedRes.ok) throw new Error(schedData?.error ?? `فشل حفظ المواعيد (${schedRes.status})`);
 
-    // Return updated days from server response so UI stays in sync
     return schedulesToDays((schedData?.schedules as ApiSchedule[]) ?? []);
   }
 
-  // ---------------- Today's stats ----------------
+  // ---------------- Today's stats (mock) ----------------
 
   const todayStats = {
     revenue: 2_800,
@@ -633,7 +597,7 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     completedToday: 7
   };
 
-  // ---------------- Pending notifications ----------------
+  // ---------------- Notifications (mock) ----------------
 
   type NotifType = 'instant' | 'scheduled' | 'review';
 
@@ -663,277 +627,7 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     notifications = notifications.filter((n) => n.id !== id);
   }
 
-  // ---------------- Live chat with patients (Go API + /ws/chat) ----------
-  //
-  // The mock `patients` list above is demo data only; the real patient
-  // conversations live in the Go backend. When this dashboard belongs to a
-  // doctor we know the id of (logged in via /doctor-dashboard?id=<uuid>), we
-  // mirror the open chat through the REST proxy for history and through the
-  // live WebSocket for real-time delivery. See $lib/chat.js.
-  const CONVERSATIONS_API = '/api/conversations';
-  const PATIENTS_API = '/api/patients';
-
-  interface ApiConversation {
-    id: string;
-    patient_id: number;
-    doctor_id: string;
-    created_at: string;
-    updated_at: string;
-  }
-
-  interface ApiPatient {
-    id: number;
-    username: string;
-    phone: string;
-    created_at: string;
-  }
-
-  let apiConversations = $state<ApiConversation[]>([]);
-  let apiPatients = $state<Record<number, ApiPatient>>({});
-  let liveMessages = $state<import('$lib/chat.js').ChatMessage[]>([]);
-  let liveConvId = $state('');
-  let liveSending = $state(false);
-  let liveChatSession = $state<ReturnType<typeof openChatSocket> | null>(null);
-
-  /**
-   * While a live chat is open we poll the REST history API (deduped by
-   * message id). The live socket is the fast path — it pushes the patient's
-   * message the instant the Go server stores it — but the polling guarantees
-   * the message still lands "at the same moment" even if the socket is down
-   * (Go server unreachable / wrong port).
-   */
-  /** @type {number | null} Timer for the open-thread message poll. */
-  let livePollTimer: number | null = null;
-  /** @type {number | null} Timer for the thread-list poll. */
-  let threadPollTimer: number | null = null;
-  /** Message ids already in `liveMessages` (dedupe poll against socket). */
-  const liveKnownIds = new Set();
-
-  /** True when we know this doctor's API id (came in via ?id=). */
-  const isLiveDoctor = $derived(doctor?.id !== undefined && doctor?.id !== '');
-
-  /**
-   * Surface a new peer message in both the open overlay and the mock thread
-   * list, deduped by id so socket pushes and polls never double-add.
-   */
-  function appendLiveMessage(msg: ApiChatMessage, openConvId: string) {
-    if (!msg?.id || liveKnownIds.has(String(msg.id))) return;
-    liveKnownIds.add(String(msg.id));
-    liveMessages = [...liveMessages, msg];
-    const targetPatientId = apiConversations.find((c) => c.id === openConvId)?.patient_id;
-    const target = targetPatientId != null ? patients.find((x) => x.id === targetPatientId) : null;
-    if (target) {
-      const mockMsg: ChatMessage = {
-        id: Number(msg.id) || Date.now(),
-        from: msg.sender_type === 'doctor' ? 'doctor' : 'patient',
-        text: msg.message ?? '',
-        time: formatApiTime(msg.created_at)
-      };
-      target.messages = [...(target.messages ?? []), mockMsg];
-    }
-  }
-
-  function startLivePolling() {
-    stopLivePolling();
-    if (!liveConvId) return;
-    livePollTimer = window.setInterval(() => {
-      const openId = liveConvId;
-      if (!openId) return;
-      fetchConversationMessages(openId)
-        .then((rows) => {
-          if (liveConvId !== openId || !rows) return;
-          for (const row of rows) {
-            if (row.sender_type === 'doctor') continue; // our own sends
-            appendLiveMessage(row, openId);
-          }
-        })
-        .catch(() => {}); // transient: keep polling
-    }, 3000);
-  }
-
-  function stopLivePolling() {
-    if (livePollTimer !== null) {
-      window.clearInterval(livePollTimer);
-      livePollTimer = null;
-    }
-  }
-
-  /**
-   * Re-pull the doctor's conversation threads. Runs while the dashboard is
-   * open so a brand-new patient message that creates a *new* conversation
-   * appears in the thread list without a manual reload.
-   */
-  async function refreshApiConversations(doctorId: string) {
-    if (!doctorId) return;
-    try {
-      const res = await fetch(`${CONVERSATIONS_API}?doctor_id=${encodeURIComponent(doctorId)}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      apiConversations = Array.isArray(data?.conversations) ? data.conversations : [];
-    } catch {
-      /* transient: keep polling */
-    }
-  }
-
-  function stopThreadPolling() {
-    if (threadPollTimer !== null) {
-      window.clearInterval(threadPollTimer);
-      threadPollTimer = null;
-    }
-  }
-
-  async function loadLiveChatFor(doctorId: string) {
-    stopLivePolling();
-    stopThreadPolling();
-    apiConversations = [];
-    apiPatients = {};
-    liveMessages = [];
-    liveKnownIds.clear();
-    liveConvId = '';
-
-    if (!doctorId) return;
-
-    try {
-      const res = await fetch(`${CONVERSATIONS_API}?doctor_id=${encodeURIComponent(doctorId)}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      apiConversations = Array.isArray(data?.conversations) ? data.conversations : [];
-    } catch {
-      return; // not fatal: mock list still works
-    }
-
-    // Keep the thread list fresh while the dashboard is open.
-    threadPollTimer = window.setInterval(() => refreshApiConversations(doctorId), 5000);
-
-    // Pull the patient rows so we can show real names next to each thread.
-    const ids = [...new Set(apiConversations.map((c) => c.patient_id))];
-    if (ids.length > 0) {
-      const res = await fetch(PATIENTS_API).catch(() => null);
-      if (res && res.ok) {
-        const data = await res.json();
-        const rows: ApiPatient[] = Array.isArray(data?.patients) ? data.patients : [];
-        for (const row of rows) apiPatients[row.id] = row;
-      }
-    }
-  }
-
-  function openLiveChat(conversation: ApiConversation) {
-    closeLiveChat();
-    liveConvId = conversation.id;
-    liveMessages = [];
-    liveKnownIds.clear();
-
-    // Sync the mock patient row so the existing overlay can render the
-    // familiar demo UI; the live socket drives the real data.
-    const target = syncMockPatient(conversation);
-    activeChatPatient = target;
-    chatInput = '';
-
-    liveChatSession = openChatSocket({
-      conversationId: conversation.id,
-      senderType: 'doctor',
-      senderId: doctor?.id ?? '',
-      onIncoming: (msg) => {
-        // Dedupe by id: the socket push and the history poll both deliver the
-        // same peer message, so only the first copy lands.
-        appendLiveMessage(msg, liveConvId || conversation.id);
-      },
-      onError: () => {} // REST fallback keeps sending alive; no banner needed
-    });
-
-    fetchConversationMessages(conversation.id)
-      .then((rows) => {
-        if (liveConvId !== conversation.id || !rows) return;
-        liveMessages = rows.filter((m) => m.sender_type !== 'doctor');
-        for (const m of rows) if (m.sender_type !== 'doctor') liveKnownIds.add(String(m.id));
-        const p = patients.find((x) => x.id === conversation.patient_id);
-        if (p) {
-          p.messages = rows.map((m) => ({
-            id: Number(m.id) || 0,
-            from: m.sender_type === 'doctor' ? 'doctor' : 'patient',
-            text: m.message ?? '',
-            time: formatApiTime(m.created_at)
-          }));
-        }
-      })
-      .catch(() => {});
-
-    startLivePolling();
-  }
-
-  /**
-   * Guarantee the mock list has a row for this real patient so the chat can be
-   * opened from the thread list. Keeps the demo patients untouched.
-   */
-  function syncMockPatient(conversation: ApiConversation): Patient {
-    let target = patients.find((p) => p.id === conversation.patient_id);
-    if (!target) {
-      target = {
-        id: conversation.patient_id,
-        name: apiPatients[conversation.patient_id]?.username ?? `مريض #${conversation.patient_id}`,
-        initials: (apiPatients[conversation.patient_id]?.username ?? 'م').charAt(0),
-        age: 0,
-        complaint: 'محادثة مباشرة',
-        status: 'active',
-        consultType: 'chat',
-        waitSince: '',
-        messages: []
-      };
-      patients = [target, ...patients];
-    }
-    return target;
-  }
-
-  function closeLiveChat() {
-    if (liveChatSession) {
-      liveChatSession.dispose();
-      liveChatSession = null;
-    }
-    stopLivePolling();
-    liveConvId = '';
-    liveMessages = [];
-  }
-
-  function sendLiveMessage() {
-    const text = chatInput.trim();
-    if (!text || !liveConvId || !liveChatSession || liveSending) return;
-    liveSending = true;
-    chatInput = '';
-    try {
-      // Socket path with REST fallback (see $lib/chat.js). The patient's side
-      // receives it via `message.created`.
-      liveChatSession.send(text);
-    } finally {
-      liveSending = false;
-    }
-  }
-
-  function handleLiveChatKey(e: KeyboardEvent) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendLiveMessage();
-    }
-  }
-
-  function formatApiTime(iso?: string) {
-    if (!iso) return '';
-    try {
-      return new Date(iso).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
-    } catch {
-      return '';
-    }
-  }
-
-  $effect(() => {
-    const id = doctor?.id;
-    if (id) loadLiveChatFor(id);
-  });
-
-  $effect(() => {
-    return () => closeLiveChat();
-  });
-
-  // ---------------- Patients list ----------------
+  // ---------------- Patients list (declared before live chat uses it) ----------------
 
   type PatientStatus = 'waiting' | 'active' | 'done' | 'scheduled';
 
@@ -1015,30 +709,290 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     }
   ]);
 
-  // patients filter + شات state
   let activeChatPatient = $state<Patient | null>(null);
   let chatInput = $state('');
   let chatBodyEl = $state<HTMLElement | null>(null);
 
-  /**
-   * Keep the chat scrolled to the newest message whenever the open
-   * conversation gains rows (open, send, or live incoming). The body element
-   * is re-created on every open/close, so a $effect on the message list is
-   * more reliable than a one-shot setTimeout.
-   */
+  // Unique, collision-free ids for keyed {#each} over chat messages.
+  let localMsgId = 1000;
+
+  // Keep the chat scrolled to the newest message.
   $effect(() => {
     const p = activeChatPatient;
-    const n = p ? p.messages.length : 0;
+    void (p ? p.messages.length : 0);
     requestAnimationFrame(() => {
       if (chatBodyEl) chatBodyEl.scrollTop = chatBodyEl.scrollHeight;
     });
   });
 
+  // ---------------- Live chat with patients (Go API + /ws/chat) ----------------
+
+  const CONVERSATIONS_API = '/api/conversations';
+  const PATIENTS_API = '/api/patients';
+
+  interface ApiConversation {
+    id: string;
+    patient_id: number;
+    doctor_id: string;
+    created_at: string;
+    updated_at: string;
+  }
+
+  interface ApiPatient {
+    id: number;
+    username: string;
+    phone: string;
+    created_at: string;
+  }
+
+  let apiConversations = $state<ApiConversation[]>([]);
+  let apiPatients = $state<Record<number, ApiPatient>>({});
+  let liveMessages = $state<ApiChatMessage[]>([]);
+  let liveConvId = $state('');
+  let liveSending = $state(false);
+  let liveChatSession = $state<ReturnType<typeof openChatSocket> | null>(null);
+
+  // The socket is the fast path; polling guarantees delivery if it is down.
+  let livePollTimer: number | null = null;
+  let threadPollTimer: number | null = null;
+  // Message ids already shown (dedupes poll against socket).
+  const liveKnownIds = new Set<string>();
+
+  const isLiveDoctor = $derived(doctorId !== '');
+
+  function formatApiTime(iso?: string) {
+    if (!iso) return '';
+    try {
+      return new Date(iso).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * Surface a new peer message in the open overlay and the thread list,
+   * deduped by id. Doctor messages are ignored here: they are added
+   * optimistically by sendLiveMessage, so a socket echo must not duplicate them.
+   */
+  function appendLiveMessage(msg: ApiChatMessage, openConvId: string) {
+    if (msg?.sender_type === 'doctor') return;
+    if (!msg?.id || liveKnownIds.has(String(msg.id))) return;
+    liveKnownIds.add(String(msg.id));
+    liveMessages = [...liveMessages, msg];
+
+    const targetPatientId = apiConversations.find((c) => c.id === openConvId)?.patient_id;
+    const target = targetPatientId != null ? patients.find((x) => x.id === targetPatientId) : null;
+    if (target) {
+      target.messages = [
+        ...(target.messages ?? []),
+        {
+          id: ++localMsgId,
+          from: 'patient',
+          text: msg.message ?? '',
+          time: formatApiTime(msg.created_at)
+        }
+      ];
+    }
+  }
+
+  function pushLocalDoctorMessage(body: string) {
+    const pid = apiConversations.find((c) => c.id === liveConvId)?.patient_id;
+    const p = pid != null ? patients.find((x) => x.id === pid) : null;
+    if (p) {
+      p.messages = [
+        ...p.messages,
+        { id: ++localMsgId, from: 'doctor', text: body, time: formatApiTime(new Date().toISOString()) }
+      ];
+    }
+  }
+
+  function startLivePolling() {
+    stopLivePolling();
+    if (!liveConvId) return;
+    livePollTimer = window.setInterval(() => {
+      const openId = liveConvId;
+      if (!openId) return;
+      fetchConversationMessages(openId)
+        .then((rows) => {
+          if (liveConvId !== openId || !rows) return;
+          for (const row of rows) appendLiveMessage(row, openId);
+        })
+        .catch(() => {}); // transient: keep polling
+    }, 3000);
+  }
+
+  function stopLivePolling() {
+    if (livePollTimer !== null) {
+      window.clearInterval(livePollTimer);
+      livePollTimer = null;
+    }
+  }
+
+  function stopThreadPolling() {
+    if (threadPollTimer !== null) {
+      window.clearInterval(threadPollTimer);
+      threadPollTimer = null;
+    }
+  }
+
+  async function loadPatients() {
+    const res = await fetch(PATIENTS_API).catch(() => null);
+    if (res && res.ok) {
+      const data = await res.json().catch(() => null);
+      const rows: ApiPatient[] = Array.isArray(data?.patients) ? data.patients : [];
+      for (const row of rows) apiPatients[row.id] = row;
+    }
+  }
+
+  /** Re-pull the thread list so brand-new conversations appear without a reload. */
+  async function refreshApiConversations(doctorId: string) {
+    if (!doctorId) return;
+    try {
+      const res = await fetch(`${CONVERSATIONS_API}?doctor_id=${encodeURIComponent(doctorId)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      apiConversations = Array.isArray(data?.conversations) ? data.conversations : [];
+      // A new conversation may belong to a patient we have no name for yet.
+      if (apiConversations.some((c) => !apiPatients[c.patient_id])) await loadPatients();
+    } catch {
+      /* transient: keep polling */
+    }
+  }
+
+  async function loadLiveChatFor(id: string) {
+    closeLiveChat();
+    stopThreadPolling();
+    apiConversations = [];
+    apiPatients = {};
+
+    if (!id) return;
+
+    try {
+      const res = await fetch(`${CONVERSATIONS_API}?doctor_id=${encodeURIComponent(id)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      apiConversations = Array.isArray(data?.conversations) ? data.conversations : [];
+    } catch {
+      return; // not fatal: mock list still works
+    }
+
+    threadPollTimer = window.setInterval(() => refreshApiConversations(id), 5000);
+
+    if (apiConversations.length > 0) await loadPatients();
+  }
+
+  /**
+   * Guarantee the mock list has a row for this real patient. Returns the
+   * reactive row from `patients` (not the raw object) so later mutations
+   * trigger updates.
+   */
+  function syncMockPatient(conversation: ApiConversation): Patient {
+    let target = patients.find((p) => p.id === conversation.patient_id);
+    if (!target) {
+      const username = apiPatients[conversation.patient_id]?.username;
+      patients = [
+        {
+          id: conversation.patient_id,
+          name: username ?? `مريض #${conversation.patient_id}`,
+          initials: (username ?? 'م').charAt(0),
+          age: 0,
+          complaint: 'محادثة مباشرة',
+          status: 'active',
+          consultType: 'chat',
+          waitSince: '',
+          messages: []
+        },
+        ...patients
+      ];
+      target = patients.find((p) => p.id === conversation.patient_id)!;
+    }
+    return target;
+  }
+
+  function openLiveChat(conversation: ApiConversation) {
+    closeLiveChat();
+    liveConvId = conversation.id;
+    liveMessages = [];
+    liveKnownIds.clear();
+
+    const target = syncMockPatient(conversation);
+    activeChatPatient = target;
+    chatInput = '';
+
+    liveChatSession = openChatSocket({
+      conversationId: conversation.id,
+      senderType: 'doctor',
+      senderId: doctor?.id ?? '',
+      onIncoming: (msg) => {
+        appendLiveMessage(msg, liveConvId || conversation.id);
+      },
+      onError: () => {} // REST fallback keeps sending alive
+    });
+
+    fetchConversationMessages(conversation.id)
+      .then((rows) => {
+        if (liveConvId !== conversation.id || !rows) return;
+        liveMessages = rows.filter((m) => m.sender_type !== 'doctor');
+        for (const m of rows) if (m.sender_type !== 'doctor') liveKnownIds.add(String(m.id));
+        const p = patients.find((x) => x.id === conversation.patient_id);
+        if (p) {
+          p.messages = rows.map((m) => ({
+            id: ++localMsgId,
+            from: m.sender_type === 'doctor' ? ('doctor' as const) : ('patient' as const),
+            text: m.message ?? '',
+            time: formatApiTime(m.created_at)
+          }));
+        }
+      })
+      .catch(() => {});
+
+    startLivePolling();
+  }
+
+  function closeLiveChat() {
+    if (liveChatSession) {
+      liveChatSession.dispose();
+      liveChatSession = null;
+    }
+    stopLivePolling();
+    liveConvId = '';
+    liveMessages = [];
+  }
+
+  function sendLiveMessage() {
+    const body = chatInput.trim();
+    if (!body || !liveConvId || !liveChatSession || liveSending) return;
+    liveSending = true;
+    chatInput = '';
+    try {
+      // Socket path with REST fallback (see $lib/chat.js).
+      liveChatSession.send(body);
+      // Show it immediately; appendLiveMessage ignores doctor echoes.
+      pushLocalDoctorMessage(body);
+    } finally {
+      liveSending = false;
+    }
+  }
+
+  // FIX 1: id string only. Untracked so the load's own state writes don't loop.
+  $effect(() => {
+    const id = doctorId;
+    if (id) untrack(() => loadLiveChatFor(id));
+  });
+
+  // FIX 2: on unmount stop BOTH timers (thread polling used to leak).
+  $effect(() => {
+    return () => {
+      closeLiveChat();
+      stopThreadPolling();
+    };
+  });
+
+  // ---------------- Mock chat ----------------
+
   function openChat(patient: Patient) {
     activeChatPatient = patient;
     chatInput = '';
-    // The $effect on activeChatPatient.messages.length triggers the
-    // scroll-to-bottom automatically after the overlay renders.
   }
 
   function closeChat() {
@@ -1047,38 +1001,37 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
   }
 
   function sendMessage() {
-    const text = chatInput.trim();
-    if (!text || !activeChatPatient) return;
+    const body = chatInput.trim();
+    if (!body || !activeChatPatient) return;
 
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit', numberingSystem: 'latn' });
+    const timeStr = new Date().toLocaleTimeString('ar-SA', {
+      hour: '2-digit',
+      minute: '2-digit',
+      numberingSystem: 'latn'
+    });
 
-    // push into the patient's messages array
+    const activeId = activeChatPatient.id;
+
     patients = patients.map((p) => {
-      if (p.id !== activeChatPatient!.id) return p;
+      if (p.id !== activeId) return p;
       return {
         ...p,
-        messages: [...p.messages, { id: Date.now(), from: 'doctor', text, time: timeStr }]
+        messages: [...p.messages, { id: ++localMsgId, from: 'doctor' as const, text: body, time: timeStr }]
       };
     });
 
-    // keep activeChatPatient in sync
-    activeChatPatient = patients.find((p) => p.id === activeChatPatient!.id) ?? null;
+    activeChatPatient = patients.find((p) => p.id === activeId) ?? null;
     chatInput = '';
   }
 
   function handleChatKey(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (liveConvId && liveChatSession) sendLiveMessage();
-      else sendMessage();
+      sendOrLive();
     }
   }
 
-  /**
-   * Unified send: routes to the live socket/REST path when a live
-   * conversation is open, otherwise falls back to the mock path.
-   */
+  /** Routes to the live socket/REST path when a live conversation is open. */
   function sendOrLive() {
     if (liveConvId && liveChatSession) sendLiveMessage();
     else sendMessage();
@@ -1091,8 +1044,7 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     scheduled: 'مجدولة'
   };
 
-  // ----------------------------------------------------------------
-  // Save all clinics + reload on success
+  // ---------------- Save all clinics ----------------
 
   let saving = $state(false);
   let savedJustNow = $state(false);
@@ -1100,50 +1052,47 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
 
   async function saveSettings() {
     if (saving || !doctor?.id) return;
-    saving    = true;
+    saving = true;
     saveError = '';
 
-    // Clear per-row errors
     clinics = clinics.map((c) => ({ ...c, saveError: '' }));
 
     let anyFailed = false;
 
-    for (const clinic of clinics) {
+    for (const clinic of [...clinics]) {
       if (!clinic.name.trim() || !clinic.address.trim()) {
         clinics = clinics.map((c) =>
-          c.localId === clinic.localId
-            ? { ...c, saveError: 'اسم المكان والعنوان مطلوبان' }
-            : c
+          c.localId === clinic.localId ? { ...c, saveError: 'اسم المكان والعنوان مطلوبان' } : c
         );
         anyFailed = true;
         continue;
       }
 
-      // Validate slot times before sending to the API
       const invalidDays = clinic.days.filter((d) => {
         if (d.isOff) return false;
-        const pad = (t: string) => t.split(':').map((p) => p.padStart(2, '0')).join(':');
-        return d.slots.some((s) => !s.from || !s.to || pad(s.from) >= pad(s.to));
+        return d.slots.some((s) => !s.from || !s.to || padTime(s.from) >= padTime(s.to));
       });
       if (invalidDays.length > 0) {
         const names = invalidDays.map((d) => d.label).join('، ');
         clinics = clinics.map((c) =>
-          c.localId === clinic.localId
-            ? { ...c, saveError: `يرجى تصحيح أوقات الكشف في: ${names}` }
-            : c
+          c.localId === clinic.localId ? { ...c, saveError: `يرجى تصحيح أوقات الكشف في: ${names}` } : c
         );
         anyFailed = true;
         continue;
       }
 
-      clinics = clinics.map((c) => c.localId === clinic.localId ? { ...c, saving: true } : c);
+      clinics = clinics.map((c) => (c.localId === clinic.localId ? { ...c, saving: true } : c));
 
       try {
         const updatedDays = await saveClinic(clinic);
-        clinics = clinics.map((c) => c.localId === clinic.localId ? { ...c, saving: false, saveError: '', days: updatedDays } : c);
+        clinics = clinics.map((c) =>
+          c.localId === clinic.localId ? { ...c, saving: false, saveError: '', days: updatedDays } : c
+        );
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'تعذّر الحفظ';
-        clinics   = clinics.map((c) => c.localId === clinic.localId ? { ...c, saving: false, saveError: msg } : c);
+        clinics = clinics.map((c) =>
+          c.localId === clinic.localId ? { ...c, saving: false, saveError: msg } : c
+        );
         anyFailed = true;
       }
     }
@@ -1161,23 +1110,7 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
   // Re-load from the API to discard all unsaved local changes
   async function cancelChanges() {
     if (!doctor?.id || saving) return;
-    clinicsLoading = true;
-    clinicsError   = '';
-    try {
-      const res  = await fetch(`${WORK_PLACES_API}?doctor_id=${encodeURIComponent(doctor.id)}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error ?? `فشل التحميل (${res.status})`);
-      const rows: ApiWorkPlace[] = Array.isArray(data?.work_places) ? data.work_places : [];
-      let counter = 1;
-      clinics = rows.map((wp) => apiToClinic(wp, counter++));
-      localIdCounter = counter;
-      if (clinics.length > 0) expandedClinicIds = [clinics[0].localId];
-      else expandedClinicIds = [];
-    } catch (err) {
-      clinicsError = err instanceof Error ? err.message : 'تعذّر إعادة التحميل';
-    } finally {
-      clinicsLoading = false;
-    }
+    await fetchClinics(doctor.id);
   }
 </script>
 
@@ -1208,9 +1141,9 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
       </a>
 
       <a href="/" class="back-link" onclick={(e) => { e.preventDefault(); goto('/'); }}>
-  <ArrowLeft size={16} class="flip-rtl" />
-  رجوع للرئيسية
-</a>
+        <ArrowLeft size={16} class="flip-rtl" />
+        رجوع للرئيسية
+      </a>
 
     </div>
   </header>
@@ -1430,8 +1363,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     </section>
 
 
-
-
     <!-- ===== LIVE CONVERSATIONS (Go backend) ===== -->
     {#if isLiveDoctor && apiConversations.length > 0}
       <section class="panel live-conv-panel">
@@ -1448,25 +1379,22 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
 
         <ul class="live-conv-list">
           {#each apiConversations as conv (conv.id)}
-            <li
-              class="live-conv-item"
-              class:active={liveConvId === conv.id}
-            >
+            <li class="live-conv-item" class:active={liveConvId === conv.id}>
               <button
                 class="live-conv-trigger"
                 aria-label={`فتح محادثة ${apiPatients[conv.patient_id]?.username ?? `مريض #${conv.patient_id}`}`}
                 onclick={() => openLiveChat(conv)}
               >
-              <div class="live-conv-avatar" aria-hidden="true">
-                {(apiPatients[conv.patient_id]?.username ?? 'م').charAt(0).toUpperCase()}
-              </div>
-              <div class="live-conv-info">
-                <strong>{apiPatients[conv.patient_id]?.username ?? `مريض #${conv.patient_id}`}</strong>
-                <p>آخر تحديث: {formatApiTime(conv.updated_at)}</p>
-              </div>
-              {#if liveConvId === conv.id}
-                <span class="live-badge">مفتوحة</span>
-              {/if}
+                <div class="live-conv-avatar" aria-hidden="true">
+                  {(apiPatients[conv.patient_id]?.username ?? 'م').charAt(0).toUpperCase()}
+                </div>
+                <div class="live-conv-info">
+                  <strong>{apiPatients[conv.patient_id]?.username ?? `مريض #${conv.patient_id}`}</strong>
+                  <p>آخر تحديث: {formatApiTime(conv.updated_at)}</p>
+                </div>
+                {#if liveConvId === conv.id}
+                  <span class="live-badge">مفتوحة</span>
+                {/if}
               </button>
             </li>
           {/each}
@@ -1530,9 +1458,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
       </div>
 
     </section>
-
-
-
 
 
     <!-- ===== CLINICS / HOSPITALS ===== -->
@@ -1624,7 +1549,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
 
               </div>
 
-              <!-- per-row save error -->
               {#if clinic.saveError}
                 <div class="clinic-row-error">
                   <AlertCircle size={14} />
@@ -1636,7 +1560,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
               {#if expandedClinicIds.includes(clinic.localId)}
                 <div class="clinic-body">
 
-                  <!-- basic info fields -->
                   <div class="clinic-fields">
 
                     <div class="clinic-field">
@@ -1715,7 +1638,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
                       {#each clinic.days as day (day.dayOfWeek)}
                         <div class="clinic-day-row" class:is-off={day.isOff}>
 
-                          <!-- day toggle + label -->
                           <div class="clinic-day-label">
                             <button
                               class="switch small"
@@ -1730,29 +1652,21 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
                             <strong>{day.label}</strong>
                           </div>
 
-                          <!-- slots or off tag -->
                           {#if day.isOff}
                             <span class="schedule-off-tag">يوم عطلة / غير متاح</span>
                           {:else}
                             <div class="clinic-slots">
                               {#each day.slots as slot (slot.id)}
-                                {@const slotInvalid = !!slot.from && !!slot.to && slot.from >= slot.to}
+                                {@const slotInvalid = !!slot.from && !!slot.to && padTime(slot.from) >= padTime(slot.to)}
                                 <div class="clinic-slot" class:invalid={slotInvalid}>
                                   <label>
                                     <span>من</span>
-                                    <input
-                                      type="time"
-                                      bind:value={slot.from}
-                                    />
+                                    <input type="time" bind:value={slot.from} />
                                     <small>{formatTime(slot.from)}</small>
                                   </label>
                                   <label>
                                     <span>إلى</span>
-                                    <input
-                                      type="time"
-                                      bind:value={slot.to}
-                                      min={slot.from}
-                                    />
+                                    <input type="time" bind:value={slot.to} min={slot.from} />
                                     <small>{formatTime(slot.to)}</small>
                                   </label>
                                   {#if day.slots.length > 1}
@@ -1798,8 +1712,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     </section>
 
 
-
-
     <!-- Footer actions -->
     <div class="page-actions">
 
@@ -1837,7 +1749,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
 
 <!-- ===== CHAT OVERLAY ===== -->
 {#if activeChatPatient}
-  <!-- backdrop -->
   <div
     class="chat-backdrop"
     role="button"
@@ -1849,7 +1760,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
 
   <div class="chat-window" role="dialog" aria-modal="true" aria-label="محادثة مع {activeChatPatient.name}">
 
-    <!-- chat header -->
     <div class="chat-header">
 
       <div class="chat-header-avatar" aria-hidden="true">
@@ -1887,7 +1797,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
 
     </div>
 
-    <!-- status banner -->
     <div class="chat-status-bar status-bar-{activeChatPatient.status}">
       <span class="status-pill status-pill-{activeChatPatient.status}">
         {statusLabel[activeChatPatient.status]}
@@ -1898,7 +1807,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
       </span>
     </div>
 
-    <!-- messages body -->
     <div class="chat-body" bind:this={chatBodyEl}>
 
       {#if activeChatPatient.messages.length === 0}
@@ -1926,7 +1834,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
 
     </div>
 
-    <!-- input bar -->
     {#if activeChatPatient.status !== 'done'}
       <div class="chat-input-bar">
         <button class="chat-attach-btn" aria-label="إرفاق ملف">
@@ -1998,24 +1905,13 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     /* ── Gradients ── */
     --grad-pine: linear-gradient(135deg, var(--pine) 0%, var(--pine-light) 100%);
     --grad-apricot: linear-gradient(135deg, var(--apricot) 0%, var(--apricot-deep) 100%);
-    --grad-progress: linear-gradient(90deg, var(--pine-light), var(--apricot));
-    --grad-hero: linear-gradient(160deg, #163832 0%, #24544a 60%, #1e4a40 100%);
 
     /* ── Shadows ── */
     --shadow-xs: 0 1px 3px rgba(22,56,50,0.08);
     --shadow-sm: 0 4px 12px -4px rgba(22,56,50,0.14);
     --shadow-md: 0 8px 24px -8px rgba(22,56,50,0.2);
-    --shadow-lg: 0 20px 48px -16px rgba(22,56,50,0.28);
     --shadow-apricot: 0 8px 20px -8px rgba(224,121,63,0.45);
     --shadow-chat: 0 0 0 1px rgba(22,56,50,0.06), 0 24px 60px -12px rgba(22,38,33,0.4);
-
-    /* ── Consult type colors ── */
-    --chat-color: var(--info);
-    --chat-mist: var(--info-mist);
-    --audio-color: var(--success);
-    --audio-mist: var(--success-mist);
-    --video-color: var(--purple);
-    --video-mist: var(--purple-mist);
 
     /* ── Status colors ── */
     --status-waiting-color: var(--warning);
@@ -2110,7 +2006,7 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
 
   .primary-btn {
     background: var(--grad-pine);
-    color: black;
+    color: var(--paper); /* FIX: was black on a dark gradient */
     box-shadow: var(--shadow-md);
   }
 
@@ -2636,19 +2532,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     }
   }
 
-  /* ---------------- Rules ---------------- */
-  .rules-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 18px;
-  }
-
-  @media (max-width: 560px) {
-    .rules-grid {
-      grid-template-columns: 1fr;
-    }
-  }
-
   /* ---------------- Page actions ---------------- */
   .page-actions {
     display: flex;
@@ -2674,6 +2557,10 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     color: var(--success);
   }
 
+  .save-error-hint {
+    color: #dc2626;
+  }
+
   .page-actions-buttons {
     display: flex;
     gap: 12px;
@@ -2691,9 +2578,7 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     }
   }
 
-  /* ============================================================
-     TODAY'S STATS
-  ============================================================ */
+  /* ---------------- Today's stats ---------------- */
   .stats-row {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2739,11 +2624,10 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     flex-shrink: 0;
   }
 
-  /* ── stat cards ── */
-  .stat-card-icon.revenue  { background: var(--success-mist); color: var(--success-deep); }
-  .stat-card-icon.waiting  { background: var(--warning-mist); color: var(--warning); }
-  .stat-card-icon.completed{ background: var(--pine-mist); color: var(--pine); }
-  .stat-card-icon.reviews  { background: var(--gold-mist); color: var(--gold); }
+  .stat-card-icon.revenue   { background: var(--success-mist); color: var(--success-deep); }
+  .stat-card-icon.waiting   { background: var(--warning-mist); color: var(--warning); }
+  .stat-card-icon.completed { background: var(--pine-mist); color: var(--pine); }
+  .stat-card-icon.reviews   { background: var(--gold-mist); color: var(--gold); }
 
   .stat-card-label {
     display: block;
@@ -2760,9 +2644,7 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     color: var(--pine);
   }
 
-  /* ============================================================
-     NOTIFICATIONS
-  ============================================================ */
+  /* ---------------- Notifications ---------------- */
   .notif-panel {
     gap: 0;
     padding: 0;
@@ -2797,7 +2679,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     font-size: 0.85rem;
   }
 
-  /* ── notification badge ── */
   .notif-badge {
     display: inline-flex;
     align-items: center;
@@ -2873,10 +2754,9 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     flex-shrink: 0;
   }
 
-  /* ── notification type icons ── */
-  .notif-type-icon.instant   { background: var(--danger-mist);  color: var(--danger); }
-  .notif-type-icon.scheduled { background: var(--pine-mist);    color: var(--pine); }
-  .notif-type-icon.review    { background: var(--gold-mist);    color: var(--gold); }
+  .notif-type-icon.instant   { background: var(--danger-mist); color: var(--danger); }
+  .notif-type-icon.scheduled { background: var(--pine-mist);   color: var(--pine); }
+  .notif-type-icon.review    { background: var(--gold-mist);   color: var(--gold); }
 
   .notif-text {
     flex: 1;
@@ -2907,82 +2787,12 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     color: var(--ink);
   }
 
-  /* ============================================================
-     PROFILE COMPLETION
-  ============================================================ */
-  .completion-bar-wrap {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-  }
-
-  .completion-bar {
-    flex: 1;
-    height: 10px;
-    border-radius: 999px;
-    background: var(--paper-deep);
-    overflow: hidden;
-  }
-
-  /* ── completion bar gradient ── */
-  .completion-fill {
-    height: 100%;
-    border-radius: 999px;
-    background: var(--grad-progress);
-    transition: width 0.5s ease;
-  }
-
-  .completion-pct {
-    font-size: 0.88rem;
-    font-weight: 700;
-    color: var(--pine);
-    min-width: 38px;
-    text-align: left;
-  }
-
-  .completion-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 0.84rem;
-    font-weight: 600;
-    color: var(--pine-light);
-    text-decoration: underline;
-    align-self: flex-start;
-  }
-
-  .completion-steps {
+  /* ---------------- Live conversations ---------------- */
+  /* FIX: remove default bullets / padding on the <ul> */
+  .live-conv-list {
     list-style: none;
     padding: 0;
     margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding-top: 4px;
-    border-top: 1px dashed var(--line);
-  }
-
-  .completion-step {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 0.88rem;
-    color: var(--ink-soft);
-  }
-
-  .completion-step.done {
-    color: var(--success);
-  }
-
-  .step-icon {
-    display: flex;
-    flex-shrink: 0;
-  }
-
-  /* ============================================================
-     LIVE CONVERSATIONS
-   ============================================================ */
-  .live-conv-list {
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
@@ -3006,6 +2816,11 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     background: var(--white);
     border: 1px solid var(--line-soft);
     transition: background 0.15s ease, transform 0.15s ease;
+  }
+
+  .live-conv-trigger:focus-visible {
+    outline: 2px solid var(--apricot);
+    outline-offset: 2px;
   }
 
   .live-conv-item:hover .live-conv-trigger {
@@ -3073,9 +2888,7 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     border-radius: 999px;
   }
 
-  /* ============================================================
-     CHAT OVERLAY
-  ============================================================ */
+  /* ---------------- Chat overlay ---------------- */
   .chat-backdrop {
     position: fixed;
     inset: 0;
@@ -3102,19 +2915,17 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     direction: ltr;
   }
 
-  /* everything inside goes back to RTL */
   .chat-window > * {
     direction: rtl;
   }
 
-  /* --- chat header --- */
   .chat-header {
     display: flex;
     align-items: center;
     gap: 12px;
     padding: 14px 16px;
-    background: #5d544e;   /* apricot-mist */
-    color: black;        /* pine */
+    background: #5d544e;
+    color: var(--paper);
     flex-shrink: 0;
   }
 
@@ -3143,7 +2954,7 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     height: 10px;
     border-radius: 50%;
     background: rgba(255,255,255,0.3);
-    border: 2px solid var(--pine);
+    border: 2px solid #5d544e;
   }
 
   .chat-avatar-dot.online-dot {
@@ -3171,7 +2982,7 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
 
   .chat-header-info span {
     font-size: 0.72rem;
-    color: rgba(231,224,209,0.65);
+    color: rgba(231,224,209,0.8);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -3184,40 +2995,29 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     flex-shrink: 0;
   }
 
-  .chat-icon-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--pine);                 /* was: rgba(231,224,209,0.7) */
-  transition: background-color 0.15s, color 0.15s;
-}
-
-.chat-icon-btn:hover {
-  background: var(--apricot-mist);    /* was: rgba(255,255,255,0.14) */
-  color: var(--apricot-deep);         /* was: var(--paper) */
-}
+  /* FIX: light icons on the dark header (pine icons had poor contrast) */
+  .chat-icon-btn,
+  .chat-close-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--paper);
+    transition: background-color 0.15s, color 0.15s;
+  }
 
   .chat-close-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--pine);                 /* was: rgba(231,224,209,0.7) */
-  transition: background-color 0.15s, color 0.15s;
-  margin-inline-start: 2px;
-}
+    margin-inline-start: 2px;
+  }
 
-.chat-close-btn:hover {
-  background: var(--apricot-mist);    /* was: rgba(255,80,60,0.25) */
-  color: var(--apricot-deep);         /* was: #fca5a5 */
-}
+  .chat-icon-btn:hover,
+  .chat-close-btn:hover {
+    background: rgba(255, 255, 255, 0.16);
+    color: #fff;
+  }
 
-  /* --- status bar --- */
   .chat-status-bar {
     display: flex;
     align-items: center;
@@ -3228,6 +3028,18 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     flex-shrink: 0;
   }
 
+  .status-pill {
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 2px 10px;
+    border-radius: 999px;
+  }
+
+  .status-pill-waiting   { color: var(--status-waiting-color);   background: var(--status-waiting-mist); }
+  .status-pill-active    { color: var(--status-active-color);    background: var(--status-active-mist); }
+  .status-pill-done      { color: var(--status-done-color);      background: var(--status-done-mist); }
+  .status-pill-scheduled { color: var(--status-scheduled-color); background: var(--status-scheduled-mist); }
+
   .chat-wait-label {
     display: inline-flex;
     align-items: center;
@@ -3237,7 +3049,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     margin-inline-start: auto;
   }
 
-  /* --- messages body --- */
   .chat-body {
     flex: 1;
     overflow-y: auto;
@@ -3246,15 +3057,12 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     flex-direction: column;
     scroll-behavior: smooth;
     background: #eef1f0;
-    /* restore RTL for message content */
     direction: rtl;
   }
 
-  /* custom scrollbar */
   .chat-body::-webkit-scrollbar { width: 4px; }
   .chat-body::-webkit-scrollbar-track { background: transparent; }
   .chat-body::-webkit-scrollbar-thumb { background: #c25f2b; border-radius: 99px; }
-  .chat-body::-webkit-scrollbar-thumb:hover { background: #c25f2b; }
 
   .chat-empty {
     flex: 1;
@@ -3282,22 +3090,19 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     gap: 10px;
   }
 
-  /* each message row */
   .msg-wrap {
     display: flex;
     align-items: flex-end;
     gap: 7px;
   }
 
-  /* patient messages — appear on the RIGHT in RTL */
   .msg-patient {
-    flex-direction: row;          /* avatar → bubble, RTL renders right-to-left */
-    justify-content: flex-start;  /* flex-start = visual right in RTL */
+    flex-direction: row;
+    justify-content: flex-start;
   }
 
-  /* doctor messages — appear on the LEFT in RTL */
   .msg-doctor {
-    flex-direction: row-reverse;  /* flips to left side in RTL */
+    flex-direction: row-reverse;
     justify-content: flex-start;
   }
 
@@ -3317,7 +3122,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     border: 1.5px solid #b8d8d0;
   }
 
-  /* ── doctor msg avatar ── */
   .msg-avatar-doctor {
     background: var(--grad-pine);
     color: var(--paper);
@@ -3339,7 +3143,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     word-break: break-word;
   }
 
-  /* patient bubble — white card with subtle shadow */
   .msg-patient .msg-bubble p {
     background: #ffffff;
     color: var(--ink);
@@ -3348,7 +3151,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     box-shadow: 0 1px 4px rgba(22,56,50,0.08);
   }
 
-  /* ── doctor bubble ── */
   .msg-doctor .msg-bubble p {
     background: #1a5c50;
     color: #e8f5f2;
@@ -3365,27 +3167,8 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
   }
 
   .msg-patient .msg-bubble time { text-align: right; color: var(--ink-muted); }
-  .msg-doctor  .msg-bubble time { text-align: left;  color: rgba(200,235,228,0.75); }
+  .msg-doctor  .msg-bubble time { text-align: left;  color: var(--ink-soft); }
 
-  /* date separator */
-  .msg-date-sep {
-    text-align: center;
-    font-size: 0.72rem;
-    color: var(--ink-soft);
-    margin: 8px 0 4px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .msg-date-sep::before,
-  .msg-date-sep::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: var(--line);
-  }
-
-  /* --- input bar --- */
   .chat-input-bar {
     display: flex;
     align-items: flex-end;
@@ -3467,7 +3250,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
 
   .chat-send-btn:disabled { cursor: not-allowed; opacity: 0.5; }
 
-  /* --- done bar --- */
   .chat-done-bar {
     display: flex;
     align-items: center;
@@ -3493,10 +3275,7 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     }
   }
 
-  /* ============================================================
-     CLINICS / HOSPITALS
-  ============================================================ */
-
+  /* ---------------- Clinics / hospitals ---------------- */
   .clinics-panel .panel-header {
     flex-wrap: wrap;
     gap: 12px;
@@ -3524,7 +3303,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     transform: translateY(-1px);
   }
 
-  /* empty state */
   .clinics-empty {
     display: flex;
     flex-direction: column;
@@ -3544,14 +3322,12 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     color: var(--ink-soft);
   }
 
-  /* list of clinic cards */
   .clinics-list {
     display: flex;
     flex-direction: column;
     gap: 14px;
   }
 
-  /* ── single clinic card ── */
   .clinic-card {
     border: 1.5px solid var(--line);
     border-radius: 18px;
@@ -3564,7 +3340,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     box-shadow: 0 4px 20px -8px rgba(22, 56, 50, 0.15);
   }
 
-  /* card header row */
   .clinic-card-head {
     display: flex;
     align-items: center;
@@ -3626,22 +3401,7 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     flex-shrink: 0;
   }
 
-  .clinic-expand-btn {
-    width: 34px;
-    height: 34px;
-    border-radius: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--ink-soft);
-    transition: background-color 0.15s, color 0.15s;
-  }
-
-  .clinic-expand-btn:hover {
-    background: var(--pine-mist);
-    color: var(--pine);
-  }
-
+  .clinic-expand-btn,
   .clinic-remove-btn {
     width: 34px;
     height: 34px;
@@ -3649,16 +3409,28 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--ink-muted);
     transition: background-color 0.15s, color 0.15s;
   }
+
+  .clinic-expand-btn { color: var(--ink-soft); }
+
+  .clinic-expand-btn:hover {
+    background: var(--pine-mist);
+    color: var(--pine);
+  }
+
+  .clinic-remove-btn { color: var(--ink-muted); }
 
   .clinic-remove-btn:hover {
     background: var(--danger-mist);
     color: var(--danger);
   }
 
-  /* expandable body */
+  .clinic-remove-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
   .clinic-body {
     padding: 20px;
     border-top: 1px dashed var(--line);
@@ -3668,7 +3440,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     background: var(--white);
   }
 
-  /* basic info fields grid */
   .clinic-fields {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -3766,7 +3537,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     flex-shrink: 0;
   }
 
-  /* clinic weekly schedule */
   .clinic-schedule {
     display: flex;
     flex-direction: column;
@@ -3830,7 +3600,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     color: var(--ink);
   }
 
-  /* slots column */
   .clinic-slots {
     flex: 1;
     display: flex;
@@ -3843,6 +3612,16 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     align-items: center;
     gap: 12px;
     flex-wrap: wrap;
+  }
+
+  .clinic-slot.invalid input[type='time'] {
+    border-color: var(--danger);
+  }
+
+  .slot-error-msg {
+    flex-basis: 100%;
+    font-size: 0.74rem;
+    color: var(--danger);
   }
 
   .clinic-slot label {
@@ -3884,6 +3663,9 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
   }
 
   .slot-remove-btn {
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -3923,10 +3705,10 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     .clinic-slot      { flex-direction: column; align-items: flex-start; }
   }
 
-  /* ---- unsaved badge & row error (new) ---- */
   .clinic-unsaved-badge {
     display: inline-flex;
     align-items: center;
+    align-self: flex-start;
     font-size: .68rem;
     font-weight: 600;
     color: #b45309;
@@ -3934,7 +3716,6 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     border: 1px solid #fde68a;
     border-radius: 99px;
     padding: 1px 8px;
-    margin-right: 6px;
   }
 
   .clinic-row-error {
@@ -3946,9 +3727,5 @@ import type { ChatMessage as ApiChatMessage } from '$lib/chat.js';
     background: #fef2f2;
     border-top: 1px solid #fecaca;
     padding: 6px 16px;
-  }
-
-  .save-error-hint {
-    color: #dc2626 !important;
   }
 </style>
